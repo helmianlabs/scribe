@@ -1,0 +1,30 @@
+{"id": "syn-1", "text": "[tags: shared-memory]\nWrite door went live on the Hetzner box, message 49167 saved by genesis roundtrip.", "sender": "assistant", "conversationName": "Shared Memory \u2014 muse"}
+{"id": "syn-2", "text": "Sam wants reels on FB and IG only for now; TikTok later.", "sender": "assistant", "conversationName": "Shared Memory \u2014 claude"}
+{"id": "syn-3", "text": "Stripe payout for Faith N Light landed Tuesday.", "sender": "assistant", "conversationName": "Shared Memory \u2014 grok"}
+{"id": "syn-4", "text": "Cora should look up a load by route code and post a load message to the dispatcher.", "sender": "assistant", "conversationName": "Forge TMS planning"}
+{"id": "syn-5", "text": "TypeError: Cannot read properties of undefined (reading 'routeCode')\n    at getBoard (board.ts:41:7)", "sender": "assistant", "conversationName": "Forge TMS planning"}
+{"id": "syn-6", "text": "FirstUse LinkedIn outreach: 12 dairy co-op prospects found, poll draft ready.", "sender": "assistant", "conversationName": "DairyForge"}
+{"id": "syn-7", "text": "Rick at Magic Valley is held until Apple approves the app.", "sender": "assistant", "conversationName": "DairyForge"}
+{"id": "syn-8", "text": "Herald pairing fix merged in PR #25 https://github.com/helmianlabs/helmian/pull/25", "sender": "assistant", "conversationName": "Helmian"}
+{"id": "syn-9", "text": "Runner box on Hetzner answered 'yo' in 2 seconds with the PC off.", "sender": "assistant", "conversationName": "Helmian"}
+{"id": "syn-10", "text": "Doctor appointment Friday about blood sugar and insulin dose.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-11", "text": "Took Banner to the vet this morning.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-12", "text": "Need to pay the IRS estimated tax by the 15th.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-13", "text": "Owe Fly about $190; do not pay yet.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-14", "text": "Sounds good, thanks.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-15", "text": "ok", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-16", "text": "Let's do that tomorrow.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-17", "text": "```sql\nSELECT count(*) FROM messages;\n```", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-18", "text": "pushed commit 7b02805 to fnl-img main", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-19", "text": "Compare claude-mem pricing to our $30 tier.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-20", "text": "New beanie design uses a Latin cross, KJV verse only.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-21", "text": "Kokoro voice model latency is about 900ms on the cpx11.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-22", "text": "Bryce signed up tonight.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-23", "text": "Rotate the leaked live key in the uploader repo.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-24", "text": "Caldmere grass iteration 13 looks better in the Unity editor.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-25", "text": "Saadi from DFA wants a demo next week.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-26", "text": "Kids have a birthday party on Saturday.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-27", "text": "Deploy to Vercel failed with a 502 error from the function.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-28", "text": "Landing page waitlist copy for the Product Hunt launch.", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-29", "text": "What do you think?", "sender": "assistant", "conversationName": "Random"}
+{"id": "syn-30", "text": "Name candidates must pass all six tests.", "sender": "assistant", "conversationName": "Random"}

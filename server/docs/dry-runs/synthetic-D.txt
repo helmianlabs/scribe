@@ -1,0 +1,24 @@
+Librarian dry run — D — All-round default — fixture fixtures/synthetic-sample.jsonl
+items: 30   unsorted: 7 (23.3%)
+  unsorted                        7  23.3%
+  code                            3  10%
+  dairyforge-firstuse             3  10%
+  faith-n-light                   3  10%
+  finance                         3  10%
+  personal                        3  10%
+  business                        2  6.7%
+  forge-tms                       2  6.7%
+  helmian                         2  6.7%
+  caldmere                        1  3.3%
+  shared-memory                   1  3.3%
+top rules:
+  (unsorted)                         7
+  content.project.faith-n-light      3
+  content.project.dairyforge-firstuse 3
+  content.personal                   3
+  content.finance                    3
+  content.business                   2
+  content.project.helmian            2
+  shape.code                         2
+  tag.shared-memory                  1
+  content.project.forge-tms          1

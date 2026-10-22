@@ -1,0 +1,143 @@
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import {
+  classify, classifyAll, distribution, detectShape, parseTags, stripTagLine, notebookLabel,
+  PRESETS, PRESET_A, PRESET_B, PRESET_C, PRESET_D, parsePlainRule, learnFromMove, UNSORTED, type MemoryItem,
+} from '../src/librarian/index.ts';
+
+const item = (id: number, text: string, extra: Partial<MemoryItem> = {}): MemoryItem => ({ id, text, sender: 'assistant', ...extra });
+
+test('parses the [tags: ...] line and notebook names', () => {
+  assert.deepEqual(parseTags('[tags: Hetzner, deploy]\nbody'), ['hetzner', 'deploy']);
+  assert.equal(stripTagLine('[tags: a]\nbody'), 'body');
+  assert.deepEqual(parseTags('no tags here'), []);
+  assert.equal(notebookLabel('Shared Memory — muse'), 'muse');
+  assert.equal(notebookLabel('Shared Memory - Claude'), 'claude');
+  assert.equal(notebookLabel('Random chat'), null);
+});
+
+test('shape detection: pr, commit, error, code, chat', () => {
+  assert.equal(detectShape('see https://github.com/sam/forge-tms/pull/12'), 'pr');
+  assert.equal(detectShape('pushed commit 7b02805 to main'), 'commit');
+  assert.equal(detectShape('TypeError: cannot read properties of undefined'), 'error');
+  assert.equal(detectShape('Traceback (most recent call last):\n  File "x.py"'), 'error');
+  assert.equal(detectShape('```ts\nconst a = 1\n```'), 'code');
+  assert.equal(detectShape('import x from "y";\nconst a = 1;\nexport default a;'), 'code');
+  assert.equal(detectShape('Sam wants the reels on FB and IG only.'), 'chat');
+});
+
+test('content layer: invoices -> money (preset D finance)', () => {
+  const f = classify(item(1, 'Need to send the invoice and check the payment cleared.'), PRESET_D);
+  assert.equal(f.category, 'finance');
+  assert.equal(f.winningRule, 'content.finance');
+  assert.ok(f.tags.includes('money'));
+  assert.match(f.explanation, /invoice/);
+});
+
+test('project beats topic and shape in preset D', () => {
+  const f = classify(item(2, 'Faith N Light Stripe payment for the tumbler went through.'), PRESET_D);
+  assert.equal(f.category, 'faith-n-light');
+  const g = classify(item(3, '```ts\n// Forge TMS cora tool\nconst x = 1\n```'), PRESET_D);
+  assert.equal(g.category, 'forge-tms');
+  assert.equal(g.shape, 'code');
+  assert.ok(g.tags.includes('code'));
+});
+
+test('personal only when no business named (D)', () => {
+  assert.equal(classify(item(4, 'Doctor appointment Friday about blood sugar.'), PRESET_D).category, 'personal');
+  assert.equal(classify(item(5, 'Order the Faith N Light dad cap.'), PRESET_D).category, 'faith-n-light');
+});
+
+test('source layer feeds tags; shape alone files code in D', () => {
+  const f = classify(item(6, 'const a = 1;\nconst b = 2;\nreturn a + b;', { conversationName: 'Shared Memory — claude' }), PRESET_D);
+  assert.equal(f.category, 'code');
+  assert.equal(f.source, 'claude');
+  assert.ok(f.tags.includes('from:claude'));
+});
+
+test('tag on the save line wins over words', () => {
+  const f = classify(item(7, '[tags: personal]\nThe deploy to Vercel failed again.'), PRESET_D);
+  assert.equal(f.category, 'personal');
+  assert.equal(f.winningRule, 'tag.personal');
+});
+
+test('unsorted tray: nothing matched, nothing lost', () => {
+  const f = classify(item(8, 'Sounds good.'), PRESET_D);
+  assert.equal(f.category, UNSORTED);
+  assert.equal(f.winningRule, null);
+  assert.match(f.explanation, /unsorted tray/);
+});
+
+test('whole-word matching: "cora" does not match "coral", "fnl" not inside words', () => {
+  assert.notEqual(classify(item(9, 'The coral reef trip.'), PRESET_D).category, 'forge-tms');
+  assert.equal(classify(item(10, 'Cora answered the dispatcher.'), PRESET_D).category, 'forge-tms');
+});
+
+test('deterministic: same input, same output', () => {
+  const i = item(11, 'Helmian runner box on Hetzner needs a deploy.');
+  assert.deepEqual(classify(i, PRESET_D), classify(i, PRESET_D));
+  assert.equal(classify(i, PRESET_D).category, 'helmian');
+});
+
+test('presets A/B/C sort the same item differently', () => {
+  const i = item(12, 'DairyForge invoice for the Magic Valley co-op is overdue.');
+  assert.equal(classify(i, PRESET_A).category, 'dairyforge-firstuse');
+  assert.equal(classify(i, PRESET_B).category, 'money');
+  assert.equal(classify(i, PRESET_C).category, 'work/dairyforge-firstuse');
+  assert.equal(classify(i, PRESET_D).category, 'dairyforge-firstuse');
+  assert.equal(classify(item(13, 'Kids birthday party Saturday.'), PRESET_C).category, 'personal');
+  assert.equal(classify(item(14, 'git commit the fix'), PRESET_B).category, 'code');
+});
+
+test('every preset rule is valid and every category it files to is declared', () => {
+  for (const [k, book] of Object.entries(PRESETS)) {
+    const declared = new Set(book.categories.map((c) => c.slug));
+    const ids = new Set<string>();
+    for (const r of book.rules) {
+      assert.ok(!ids.has(r.id), `${k}: duplicate rule id ${r.id}`); ids.add(r.id);
+      if (r.category) assert.ok(declared.has(r.category), `${k}: ${r.id} files to undeclared ${r.category}`);
+      assert.ok(r.description.length > 0);
+    }
+  }
+});
+
+test('plain-word custom rules', () => {
+  const r1 = parsePlainRule('Anything mentioning Saadi or DFA goes in sales leads', 'c1')!;
+  assert.deepEqual(r1.when.anyWords, ['Saadi', 'DFA']);
+  assert.equal(r1.category, 'sales-leads');
+  assert.equal(classify(item(15, 'Call Saadi tomorrow'), PRESET_D, [r1]).category, 'sales-leads');
+  const r2 = parsePlainRule('anything from muse goes in muse notes', 'c2')!;
+  assert.equal(classify(item(16, 'hello', { conversationName: 'Shared Memory — muse' }), PRESET_D, [r2]).category, 'muse-notes');
+  const r3 = parsePlainRule('errors go in bugs and tag it urgent', 'c3')!;
+  const f3 = classify(item(17, 'TypeError: x is undefined'), PRESET_D, [r3]);
+  assert.equal(f3.category, 'bugs'); assert.ok(f3.tags.includes('urgent'));
+  const r4 = parsePlainRule('anything mentioning tax and receipt goes in taxes', 'c4')!;
+  assert.deepEqual(r4.when.allWords, ['tax', 'receipt']);
+  assert.equal(parsePlainRule('put stuff somewhere maybe', 'c5'), null);
+});
+
+test('learned trigger from a manual move', () => {
+  const moved = item(18, 'Talked with Bryce about the Kokoro voice model latency.');
+  assert.equal(classify(moved, PRESET_D).category, UNSORTED);
+  const { rule } = learnFromMove(moved, 'helmian', PRESET_D);
+  assert.ok(rule, 'a rule is learned');
+  assert.equal(rule!.layer, 'learned');
+  assert.equal(classify(moved, PRESET_D, [rule!]).category, 'helmian');
+  // next item with the learned word now files the same way
+  const word = rule!.when.anyWords![0];
+  assert.equal(classify(item(19, `More notes on ${word} today.`), PRESET_D, [rule!]).category, 'helmian');
+});
+
+test('learning refuses a word that would mis-file reference items', () => {
+  const moved = item(20, 'Bryce Stripe');
+  const reference = [item(21, 'Bryce sent the Stripe invoice'), item(22, 'Bryce is on the Stripe call about payment')];
+  const { rule } = learnFromMove(moved, 'helmian', PRESET_D, [], reference);
+  assert.equal(rule, null);
+});
+
+test('distribution sums to 100%', () => {
+  const f = classifyAll([item(1, 'invoice'), item(2, 'Sounds good'), item(3, 'Forge TMS'), item(4, 'Forge TMS cora')], PRESET_D);
+  const d = distribution(f);
+  assert.equal(d.reduce((a, b) => a + b.count, 0), 4);
+  assert.equal(d[0].category, 'forge-tms');
+});
