@@ -22,7 +22,7 @@ import { getOAuthProtectedResourceMetadataUrl } from "@modelcontextprotocol/sdk/
 import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 
 import { PUBLIC_URL, MCP_PATH, PORT, AUTH_PASSPHRASE } from "./config.js";
-import { provider, approveAuthorization, denyAuthorization, getPending } from "./oauth-provider.js";
+import { provider, adoptClient, approveAuthorization, denyAuthorization, getPending } from "./oauth-provider.js";
 import { renderConsentPage } from "./consent.js";
 import { buildMcpServer } from "./mcp-server.js";
 
@@ -58,6 +58,13 @@ app.get("/healthz", (_req, res) => res.status(200).send("ok"));
 //   POST /register     -> Dynamic Client Registration (RFC 7591)
 //   POST /revoke       -> token revocation
 // ---------------------------------------------------------------------------
+app.use("/authorize", (req, _res, next) => {
+  const cid = typeof req.query.client_id === "string" ? req.query.client_id : "";
+  const ru = typeof req.query.redirect_uri === "string" ? req.query.redirect_uri : "";
+  if (cid && ru) adoptClient(cid, ru);
+  next();
+});
+
 app.use(
   mcpAuthRouter({
     provider,

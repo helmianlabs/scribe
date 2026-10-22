@@ -209,6 +209,30 @@ const clientsStore: OAuthRegisteredClientsStore = {
   },
 };
 
+/**
+ * Re-adopt a client id this server issued before an in-memory restart wiped it.
+ * Only our own id format and https redirect URIs; the passphrase consent still gates access.
+ */
+export function adoptClient(clientId: string, redirectUri: string): boolean {
+  if (clients.has(clientId)) return false;
+  if (!/^mcp-client-[0-9a-f-]{36}$/.test(clientId)) return false;
+  let u: URL;
+  try { u = new URL(redirectUri); } catch { return false; }
+  if (u.protocol !== "https:") return false;
+  clients.set(clientId, {
+    client_id: clientId,
+    client_id_issued_at: now(),
+    redirect_uris: [redirectUri],
+    token_endpoint_auth_method: "none",
+    grant_types: ["authorization_code", "refresh_token"],
+    response_types: ["code"],
+    client_name: "Re-adopted client",
+  } as OAuthClientInformationFull);
+  saveState();
+  console.log("oauth: re-adopted client", clientId, u.host);
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // The provider
 // ---------------------------------------------------------------------------
