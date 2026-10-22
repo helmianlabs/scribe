@@ -97,3 +97,15 @@ export const LIBRARIAN_TOOLS = [
   { name: 'move_memory', scope: 'memory.write', description: 'Move a memory to another shelf. The Librarian may learn a trigger word from the move.', inputSchema: { type: 'object', properties: { message_id: { type: 'integer' }, to_category: { type: 'string' }, source: { type: 'string' } }, required: ['message_id', 'to_category', 'source'] } },
   { name: 'add_rule', scope: 'memory.write', description: 'Add a plain-word filing rule, e.g. "anything mentioning invoices goes in money".', inputSchema: { type: 'object', properties: { rule: { type: 'string' }, source: { type: 'string' } }, required: ['rule', 'source'] } },
 ] as const;
+
+/** Bulk append filings (one round trip per batch). Used by the backfill. */
+export async function recordFilingsBulk(db: Queryable, filings: Filing[], filedBy: 'librarian' | 'manual' | 'backfill') {
+  const rows = filings.map((f) => ({ message_id: f.itemId, category: f.category, tags: f.tags, shape: f.shape, source: f.source, rulebook: f.rulebook, rule_key: f.winningRule, explanation: f.explanation, hits: f.hits }));
+  await db.query(
+    `INSERT INTO memory_filings (message_id, category, tags, shape, source, rulebook, rule_key, explanation, hits, filed_by, engine_ver)
+     SELECT (x->>'message_id')::bigint, x->>'category', ARRAY(SELECT jsonb_array_elements_text(x->'tags')), x->>'shape', x->>'source',
+            x->>'rulebook', x->>'rule_key', x->>'explanation', x->'hits', $2, $3
+       FROM jsonb_array_elements($1::jsonb) AS x`,
+    [JSON.stringify(rows), filedBy, ENGINE_VERSION],
+  );
+}

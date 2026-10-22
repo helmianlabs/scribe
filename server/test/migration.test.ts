@@ -10,8 +10,10 @@ import { classify, PRESET_D } from '../src/librarian/index.ts';
 const BASE = `
 CREATE ROLE memory_rw; CREATE ROLE memory_ro_hz;
 CREATE TABLE projects (uuid TEXT PRIMARY KEY, name TEXT, raw JSONB);
-CREATE TABLE conversations (uuid TEXT PRIMARY KEY, name TEXT, project_uuid TEXT, created_at TIMESTAMPTZ DEFAULT now(), updated_at TIMESTAMPTZ DEFAULT now(), message_count INT DEFAULT 0);
-CREATE TABLE messages (id BIGSERIAL PRIMARY KEY, conversation_uuid TEXT REFERENCES conversations(uuid), turn_index INT DEFAULT 0, sender TEXT CHECK (sender IN ('human','assistant')), text TEXT, created_at TIMESTAMPTZ DEFAULT now());
+-- matches the live claude_memory schema read on 2026-10-22 (no FKs, no CHECKs, no defaults except the id sequence)
+CREATE TABLE conversations (uuid TEXT PRIMARY KEY, name TEXT, project_uuid TEXT, created_at TIMESTAMPTZ, updated_at TIMESTAMPTZ, message_count INT);
+CREATE TABLE messages (id BIGSERIAL PRIMARY KEY, conversation_uuid TEXT, turn_index INT, sender TEXT, text TEXT, created_at TIMESTAMPTZ);
+CREATE INDEX idx_messages_created ON messages (created_at); CREATE INDEX idx_messages_conv ON messages (conversation_uuid);
 INSERT INTO conversations(uuid,name) VALUES ('c1','Shared Memory — muse'), ('c2','Forge TMS planning');
 INSERT INTO messages(conversation_uuid,sender,text) VALUES ('c1','assistant','[tags: hetzner]\nHelmian runner deploy done'), ('c2','human','Sounds good'), ('c2','human','invoice paid');
 `;
@@ -75,4 +77,20 @@ test('tool handlers: move learns a trigger, plain rule files new items, unsorted
   assert.equal(f3?.category, 'testers');
   const tray = await listUnsorted(db as any);
   assert.ok(Array.isArray(tray));
+});
+
+test('bulk backfill insert files every message once and empties the tray', async () => {
+  const { recordFilingsBulk } = await import('../src/server/librarian-store.ts');
+  const { classifyBatch } = await import('../src/librarian/index.ts');
+  const db = new PGlite();
+  await db.exec(BASE); await db.exec(up);
+  const m = (await db.query<any>('SELECT m.id, m.text, m.sender, c.name AS conv FROM messages m LEFT JOIN conversations c ON c.uuid=m.conversation_uuid ORDER BY m.id')).rows;
+  const f = classifyBatch(m.map((x) => ({ id: x.id, text: x.text, sender: x.sender, conversationName: x.conv })), PRESET_D);
+  await recordFilingsBulk(db as any, f, 'backfill');
+  const n = (await db.query<any>("SELECT count(*)::int n FROM memory_filings WHERE filed_by='backfill'")).rows[0].n;
+  assert.equal(n, m.length);
+  const tags = (await db.query<any>('SELECT tags FROM memory_filings ORDER BY message_id LIMIT 1')).rows[0].tags;
+  assert.ok(Array.isArray(tags));
+  const tray = (await db.query<any>('SELECT count(*)::int n FROM memory_unsorted')).rows[0].n;
+  assert.equal(tray, f.filter((x) => x.category === 'unsorted').length);
 });
