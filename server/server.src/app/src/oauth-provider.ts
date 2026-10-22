@@ -15,10 +15,13 @@
  * then drives the standard OAuth dance; the consent screen is where the human
  * actually authorizes.
  *
- * State is kept in memory. For a single-user connector this is fine: if the
- * process restarts, Sam simply re-authorizes (one click + passphrase).
+ * Auth codes and pending consents live in memory only. Registered clients,
+ * access tokens and refresh tokens are persisted to OAUTH_STATE_FILE
+ * (default /data/oauth-state.json) so connected AIs survive a restart.
  */
 import { randomBytes, createHash, randomUUID } from "node:crypto";
+import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "node:fs";
+import { dirname } from "node:path";
 import type { Response } from "express";
 import type { OAuthServerProvider, AuthorizationParams } from "@modelcontextprotocol/sdk/server/auth/provider.js";
 import type { OAuthRegisteredClientsStore } from "@modelcontextprotocol/sdk/server/auth/clients.js";
@@ -82,6 +85,47 @@ const clients = new Map<string, OAuthClientInformationFull>();
 const authCodes = new Map<string, StoredAuthCode>();
 const accessTokens = new Map<string, StoredAccessToken>();
 const refreshTokens = new Map<string, StoredRefreshToken>();
+
+// ---------------------------------------------------------------------------
+// Persistence of clients / access tokens / refresh tokens
+// ---------------------------------------------------------------------------
+
+const STATE_FILE = process.env.OAUTH_STATE_FILE || "/data/oauth-state.json";
+
+function loadState(): void {
+  try {
+    if (!existsSync(STATE_FILE)) return;
+    const raw = JSON.parse(readFileSync(STATE_FILE, "utf8"));
+    const t = now();
+    for (const c of raw.clients ?? []) if (c?.client_id) clients.set(c.client_id, c);
+    for (const a of raw.accessTokens ?? []) if (a?.token && a.expiresAt >= t) accessTokens.set(a.token, a);
+    for (const r of raw.refreshTokens ?? []) if (r?.token && r.expiresAt >= t) refreshTokens.set(r.token, r);
+    console.log(
+      `oauth state loaded: ${clients.size} clients, ${accessTokens.size} access, ${refreshTokens.size} refresh`
+    );
+  } catch (err) {
+    console.error("oauth state load failed (starting empty):", (err as Error).message);
+  }
+}
+
+function saveState(): void {
+  try {
+    mkdirSync(dirname(STATE_FILE), { recursive: true, mode: 0o700 });
+    const tmp = `${STATE_FILE}.${process.pid}.tmp`;
+    const data = JSON.stringify({
+      version: 1,
+      clients: [...clients.values()],
+      accessTokens: [...accessTokens.values()],
+      refreshTokens: [...refreshTokens.values()],
+    });
+    writeFileSync(tmp, data, { mode: 0o600 });
+    renameSync(tmp, STATE_FILE);
+  } catch (err) {
+    console.error("oauth state save failed:", (err as Error).message);
+  }
+}
+
+loadState();
 
 // ---------------------------------------------------------------------------
 // Pending-authorization tracking (between the consent GET and the consent POST)
@@ -160,6 +204,7 @@ const clientsStore: OAuthRegisteredClientsStore = {
     // Public client (Claude.ai) -> no client secret. token_endpoint_auth_method
     // defaults to "none" for public clients, which is correct for PKCE.
     clients.set(full.client_id, full);
+    saveState();
     return full;
   },
 };
@@ -252,6 +297,7 @@ export const provider: OAuthServerProvider = {
       resource: tokenResource,
       expiresAt: now() + REFRESH_TOKEN_TTL_SECONDS,
     });
+    saveState();
 
     return {
       access_token: accessToken,
@@ -272,6 +318,7 @@ export const provider: OAuthServerProvider = {
     if (!rec) throw new Error("Invalid refresh token");
     if (rec.expiresAt < now()) {
       refreshTokens.delete(refreshToken);
+      saveState();
       throw new Error("Refresh token expired");
     }
     if (rec.clientId !== client.client_id) throw new Error("Refresh token was issued to a different client");
@@ -298,6 +345,7 @@ export const provider: OAuthServerProvider = {
       resource: tokenResource,
       expiresAt: now() + ACCESS_TOKEN_TTL_SECONDS,
     });
+    saveState();
 
     return {
       access_token: accessToken,
@@ -313,6 +361,7 @@ export const provider: OAuthServerProvider = {
     if (!rec) throw new InvalidTokenError("Invalid or unknown access token");
     if (rec.expiresAt < now()) {
       accessTokens.delete(accessToken);
+      saveState();
       throw new InvalidTokenError("Access token expired");
     }
     return {
@@ -328,17 +377,19 @@ export const provider: OAuthServerProvider = {
     _client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest
   ): Promise<void> {
-    accessTokens.delete(request.token);
-    refreshTokens.delete(request.token);
+    const changed = accessTokens.delete(request.token) || refreshTokens.delete(request.token);
+    if (changed) saveState();
   },
 };
 
 // Periodic cleanup of expired in-memory records.
 setInterval(() => {
   const t = now();
+  let changed = false;
   for (const [k, v] of authCodes) if (v.expiresAt < t) authCodes.delete(k);
-  for (const [k, v] of accessTokens) if (v.expiresAt < t) accessTokens.delete(k);
-  for (const [k, v] of refreshTokens) if (v.expiresAt < t) refreshTokens.delete(k);
+  for (const [k, v] of accessTokens) if (v.expiresAt < t) { accessTokens.delete(k); changed = true; }
+  for (const [k, v] of refreshTokens) if (v.expiresAt < t) { refreshTokens.delete(k); changed = true; }
+  if (changed) saveState();
   for (const [k, v] of pendingAuth) if (v.createdAt + AUTH_CODE_TTL_SECONDS < t) pendingAuth.delete(k);
 }, 60_000).unref();
 

@@ -28,7 +28,7 @@ import { buildMcpServer } from "./mcp-server.js";
 
 const app = express();
 app.disable("x-powered-by");
-app.set("trust proxy", true);
+app.set("trust proxy", 1);
 
 const ISSUER = new URL(PUBLIC_URL);
 const RESOURCE_URL = new URL(`${PUBLIC_URL}${MCP_PATH}`);
