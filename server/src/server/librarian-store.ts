@@ -4,7 +4,7 @@
  */
 import { classify, PRESETS, type MemoryItem, type Rule, type Rulebook, type Filing } from '../librarian/index.ts';
 
-export const ENGINE_VERSION = 'librarian-0.1.0';
+export const ENGINE_VERSION = 'librarian-0.2.0';
 
 export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>;

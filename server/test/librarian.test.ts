@@ -163,3 +163,38 @@ test('conversation context layer: short turns inherit a dominant shelf, mixed ch
   assert.match(f[3].explanation, /3 of 3/);
   assert.equal(f[7].category, UNSORTED);
 });
+
+test('preset D: infra names alone do not file to a business (Muse migration note)', () => {
+  const muse = item(49168, '[tags: librarian, migration, preset-d]\n2026-10-22 (Muse, at Sam\'s go): Migration 001 applied to the claude_memory database (Neon project dairyforge) in the Neon Console - 5 Librarian tables and 3 views created on the production branch; safety branch pre-librarian-20261022 kept as the untouched pre-migration copy. Rulebook preset D recorded in librarian_settings as chosen by Sam. Next step: Paul runs the backfill.', { conversationName: 'Shared Memory — muse', sender: 'muse' });
+  const f = classify(muse, PRESET_D);
+  assert.notEqual(f.category, 'dairyforge-firstuse');
+  assert.equal(f.category, 'shared-memory');
+  assert.match(f.explanation, /Ignored as infrastructure names/);
+  // Neon project id form, hostnames and paths are ignored too
+  for (const t of ['Neon project "dairyforge" (misty-lake-10000001) is out of storage.', 'Pinged dairyforge.replit.app and /workspace/dairyforge/app/src — both up.', 'ssh root@dairyforge.example.com then restart caddy']) {
+    assert.notEqual(classify(item(1, t), PRESET_D).category, 'dairyforge-firstuse', t);
+  }
+  // ...but the business named in plain words still files there
+  assert.equal(classify(item(2, 'DairyForge pilot with DFA starts Monday.'), PRESET_D).category, 'dairyforge-firstuse');
+  // and in A-C (no ignore list) nothing changed
+  assert.equal(classify(item(3, 'Neon project dairyforge'), PRESET_A).category, 'dairyforge-firstuse');
+});
+
+test('preset D: truck-driving talk is personal; hauling words file to DairyForge only with product context', () => {
+  const drive = classify(item(1, "I'm already unloading the wash, and I'm fueling up, and I'm going to the yard, and then going home."), PRESET_D);
+  assert.equal(drive.category, 'personal');
+  assert.equal(drive.winningRule, 'content.job-talk');
+  assert.equal(classify(item(2, 'Heading home after this load, I was nodding off driving from Mountain Home.'), PRESET_D).category, 'personal');
+  assert.equal(classify(item(3, 'Picked up the milk at the dairy, tanker is full, on the road to the plant.'), PRESET_D).category, 'personal');
+  // a DairyForge conversation does not pull pure driving talk onto the business shelf
+  assert.equal(classify(item(4, 'Traffic on the highway is terrible, running late on my route.', { conversationName: 'DairyForge pilot deal structure' }), PRESET_D).category, 'personal');
+  // same hauling words, but about the product -> DairyForge
+  const prod = classify(item(5, 'The app should flag the silo meter drift and show it on the dashboard for the dairy.'), PRESET_D);
+  assert.equal(prod.category, 'dairyforge-firstuse');
+  assert.equal(prod.winningRule, 'content.project-context.dairyforge-firstuse');
+  assert.equal(classify(item(6, 'Wash tag scan: if first use is over 72 hours the trailer is blocked.'), PRESET_D).category, 'dairyforge-firstuse');
+  // a personal word never beats a named business
+  assert.equal(classify(item(7, 'Told my wife the DFA pitch went well.'), PRESET_D).category, 'dairyforge-firstuse');
+  // "Big Sister" is Claude, not family
+  assert.notEqual(classify(item(8, 'Copy this to Big Sister so Claude can review it.'), PRESET_D).category, 'personal');
+});

@@ -28,6 +28,8 @@ export interface RuleWhen {
   conversationWords?: string[];
   /** None of these words may appear (guards against false hits). */
   noneWords?: string[];
+  /** At least one of these must ALSO appear (context gate for weak trigger words). */
+  withAny?: string[];
 }
 
 export interface Rule {
@@ -51,6 +53,11 @@ export interface Rulebook {
   description: string;
   categories: { slug: string; name: string; parent?: string }[];
   rules: Rule[];
+  /**
+   * Text spans blanked out before word rules look at the text: infrastructure names (URLs, hostnames,
+   * file paths, database/cloud project ids) that contain a business name without being about it.
+   */
+  ignore?: { pattern: string; why: string }[];
 }
 
 export interface RuleHit {
