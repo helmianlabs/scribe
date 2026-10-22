@@ -9,6 +9,16 @@ import { z } from "zod";
 import { searchMemory, saveMemory, librarianPools } from "./db.js";
 import { Librarian } from "./librarian-tools.js";
 import { CHARACTER_LIMIT } from "./config.js";
+import { prepareContent, findingsToFlags, recordFlags, summarize } from "./flags/service.js";
+import { listFlags } from "./flags/store.js";
+import { scanText, SEVERITIES, type Severity } from "./flags/scanner.js";
+import type { AlertTarget } from "./flags/alerts.js";
+import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "./postoffice/tools.js";
+
+/** Self-host alerts go to ALERT_EMAIL_TO and/or ALERT_WEBHOOK_URL (both optional; stubbed if absent). */
+function selfAlertTarget(): AlertTarget {
+  return { tenantId: "self", tenantName: "Shared Memory", email: process.env.ALERT_EMAIL_TO || null, webhookUrl: process.env.ALERT_WEBHOOK_URL || null };
+}
 
 const SearchMemoryInputSchema = z
   .object({
@@ -56,11 +66,11 @@ function errorResult(prefix: string, err: unknown) {
   return { content: [{ type: "text" as const, text: `${prefix}: ${msg}` }], isError: true };
 }
 
-export function buildMcpServer(scopes: string[] = []): McpServer {
-  const server = new McpServer({
+export function buildMcpServer(scopes: string[] = [], identity: { clientId?: string | null; clientName?: string | null } = {}): McpServer {
+  const server = withInboxHint(new McpServer({
     name: "claude-memory-mcp-server",
-    version: "1.2.1",
-  });
+    version: "1.3.0",
+  }, { instructions: SERVER_INSTRUCTIONS }));
 
   server.registerTool(
     "search_memory",
@@ -230,21 +240,32 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
         };
       }
       try {
+        // Flags: secrets and personal numbers are redacted BEFORE storage.
+        const prepared = await prepareContent(params.content);
+        const tags = params.tags?.map((t) => scanText(t).redacted);
+        const category = params.category ? scanText(params.category).redacted : undefined;
         const saved = await saveMemory({
-          content: params.content,
+          content: prepared.text,
           source: params.source,
-          category: params.category,
-          tags: params.tags,
+          category,
+          tags,
         });
         // The Librarian files it (never blocks or fails the save).
         const filing = await getLibrarian().fileSaved({
           id: saved.message_id,
-          text: params.tags?.length ? `[tags: ${params.tags.join(", ")}]\n${params.content}` : params.content,
+          text: tags?.length ? `[tags: ${tags.join(", ")}]\n${prepared.text}` : prepared.text,
           sender: params.source,
           source: params.source,
           conversationName: saved.conversation_name,
         });
-        const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded };
+        let flagIds: number[] = [];
+        let alert: unknown = null;
+        try {
+          const rec = await recordFlags(librarianPools().write, "self", findingsToFlags(prepared.findings, { source_ai: params.source, reporter: "server", message_id: saved.message_id }), selfAlertTarget());
+          flagIds = rec.flags.map((f) => f.id);
+          alert = rec.alert;
+        } catch { /* flags table missing or transient: the save still stands, redaction already applied */ }
+        const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded, redactions: prepared.redactions, flags: summarize(prepared.findings), flag_ids: flagIds, alert };
         return {
           content: [{ type: "text" as const, text: JSON.stringify(output) }],
           structuredContent: output,
@@ -330,6 +351,69 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
       try { return jsonResult(await getLibrarian().addRule(p.rule, p.source)); } catch (e) { return errorResult("Error adding rule", e); }
     }
   );
+
+  // ---------------------------------------------------------------- Flags
+  server.registerTool(
+    "report_flag",
+    {
+      title: "Report a Flag",
+      description: "Report a problem you noticed: a privacy leak, a secret in a chat, harmful code an AI suggested, hedging/evasion, or anything the owner should see. The excerpt is redacted before storage. Requires memory.write.",
+      inputSchema: {
+        severity: z.enum(SEVERITIES as [Severity, ...Severity[]]),
+        category: z.enum(["secret", "pii", "harmful_code", "hedging", "privacy", "moderation", "other"]),
+        reason: z.string().min(3).max(1000),
+        source_ai: z.string().min(1).max(60).describe("Which AI produced the content."),
+        reporter: z.string().min(1).max(60).optional(),
+        excerpt: z.string().max(2000).optional(),
+        url: z.string().max(500).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async (p: { severity: Severity; category: string; reason: string; source_ai: string; reporter?: string; excerpt?: string; url?: string }) => {
+      if (!canWrite) return needWrite("report_flag");
+      try {
+        const scan = p.excerpt ? scanText(p.excerpt) : null;
+        const extra = scan ? findingsToFlags(scan.findings.filter((f) => f.category !== "hedging"), { source_ai: p.source_ai, reporter: "server", excerpt: scan.redacted }) : [];
+        const res = await recordFlags(librarianPools().write, "self", [
+          { severity: p.severity, category: p.category, origin: "report", source_ai: p.source_ai, reporter: p.reporter ?? "mcp", reason: p.reason, excerpt: scan?.redacted ?? null, context: p.url ? { url: p.url } : {} },
+          ...extra,
+        ], selfAlertTarget());
+        if (!res.installed) return jsonResult({ reported: false, note: "The flags table is not installed yet (migration 004_flags.sql)." });
+        return jsonResult({ reported: true, flag_ids: res.flags.map((f) => f.id), redactions: scan?.redactions ?? 0, alert: res.alert });
+      } catch (e) { return errorResult("Error reporting flag", e); }
+    }
+  );
+
+  server.registerTool(
+    "list_flags",
+    {
+      title: "List Flags",
+      description: "Recent flags (secrets caught, harmful code, hedging, reports), newest first. Read-only.",
+      inputSchema: {
+        min_severity: z.enum(SEVERITIES as [Severity, ...Severity[]]).optional(),
+        category: z.string().max(40).optional(),
+        since: z.string().optional(),
+        limit: z.number().int().min(1).max(200).default(50),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (p: { min_severity?: Severity; category?: string; since?: string; limit?: number }) => {
+      try { return jsonResult((await listFlags(librarianPools().read, "self", p)) as unknown as Record<string, unknown>); } catch (e) { return errorResult("Error listing flags", e); }
+    }
+  );
+
+  // ---------------------------------------------------------------- Post office
+  // Append-only on the write pool (memory_rw: SELECT + INSERT), tenant 'self'.
+  registerPostOfficeTools(server, {
+    canWrite, tenantId: "self", identity,
+    run: async (fn) => {
+      try { return jsonResult(await fn(librarianPools().write)); }
+      catch (e) {
+        if ((e as { code?: string }).code === "42P01") return errorResult("Post office", new Error("not installed yet (migration 006_post_office.sql)"));
+        return errorResult("Post office", e);
+      }
+    },
+  });
 
   return server;
 }
