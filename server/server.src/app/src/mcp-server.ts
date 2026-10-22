@@ -59,7 +59,7 @@ function errorResult(prefix: string, err: unknown) {
 export function buildMcpServer(scopes: string[] = []): McpServer {
   const server = new McpServer({
     name: "claude-memory-mcp-server",
-    version: "1.2.0",
+    version: "1.2.1",
   });
 
   server.registerTool(

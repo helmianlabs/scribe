@@ -1,5 +1,5 @@
 import type { Rule, Rulebook } from './types.ts';
-import { AI_TOOLS, CODE_WORDS, DESIGN, FINANCE, MARKETING, PERSONAL, PLANNING, PROJECTS, RESEARCH } from './vocab.ts';
+import { AI_TOOLS, CODE_WORDS, DESIGN, FINANCE, JOB_TALK, MARKETING, PERSONAL, PLANNING, PRODUCT_CONTEXT, PROJECTS, RESEARCH } from './vocab.ts';
 
 /**
  * Setup presets the customer picks at sign-up. Each becomes their rulebook.
@@ -8,22 +8,30 @@ import { AI_TOOLS, CODE_WORDS, DESIGN, FINANCE, MARKETING, PERSONAL, PLANNING, P
  * Priority bands: custom/learned 900+, tags 800, project words 500-600, topics 300-400, shape 200, source 100.
  */
 
-const projectRules = (priority: number, prefix = ''): Rule[] =>
+const allWords = (p: { words: string[]; weak?: string[] }) => [...p.words, ...(p.weak ?? [])];
+const STRONG_WORDS = Object.values(PROJECTS).flatMap((p) => p.words);
+/** Business words that are also plain day-job talk (equipment and product words like silo, pump, wash stay out). */
+const JOB_WEAK = ['milk', 'hauling', 'hauler', 'haulers', 'milk hauler', 'milk pickup', 'tanker', 'dairy', 'dairyman', 'dairymen', 'freight', 'loads', 'trucking', 'dispatch'];
+/** Sam's names for his AI helpers; "Big Sister" is Claude, not family. */
+const AI_NICKNAMES = ['big sister', 'big brother', 'big brother claude', 'big sister claude'];
+
+/** strongOnly=false (presets A-C): strong and weak words both file. Preset D uses strong only here. */
+const projectRules = (priority: number, prefix = '', strongOnly = false): Rule[] =>
   Object.entries(PROJECTS).map(([slug, p]) => ({
     id: `content.project.${slug}`,
     layer: 'content',
-    when: { anyWords: p.words },
+    when: { anyWords: strongOnly ? p.words : allWords(p) },
     category: `${prefix}${slug}`,
     addTags: [slug],
     priority,
     description: `Mentions ${p.name}.`,
   }));
 
-const projectNotebookRules = (priority: number, prefix = ''): Rule[] =>
+const projectNotebookRules = (priority: number, prefix = '', strongOnly = false): Rule[] =>
   Object.entries(PROJECTS).map(([slug, p]) => ({
     id: `content.notebook.${slug}`,
     layer: 'content',
-    when: { conversationWords: p.words },
+    when: { conversationWords: strongOnly ? p.words : allWords(p) },
     category: `${prefix}${slug}`,
     addTags: [slug],
     priority,
@@ -98,7 +106,7 @@ export const PRESET_C: Rulebook = {
   ],
   rules: [
     tagRule('personal', ['personal']),
-    { id: 'content.personal', layer: 'content', when: { anyWords: PERSONAL, noneWords: Object.values(PROJECTS).flatMap((p) => p.words) }, category: 'personal', priority: 700, description: 'Personal life with no project named.' },
+    { id: 'content.personal', layer: 'content', when: { anyWords: PERSONAL, noneWords: Object.values(PROJECTS).flatMap(allWords) }, category: 'personal', priority: 700, description: 'Personal life with no project named.' },
     ...projectRules(600, 'work/'),
     ...projectNotebookRules(550, 'work/'),
     { id: 'shape.work', layer: 'shape', when: { shape: ['code', 'pr', 'commit', 'error'] }, category: 'work/general', priority: 200, description: 'Technical work with no project named.' },
@@ -107,22 +115,54 @@ export const PRESET_C: Rulebook = {
   ],
 };
 
+/** Weak business words file only with product context (preset D). */
+const projectContextRules = (priority: (slug: string) => number): Rule[] =>
+  Object.entries(PROJECTS).filter(([, p]) => p.weak?.length).map(([slug, p]) => ({
+    id: `content.project-context.${slug}`,
+    layer: 'content',
+    when: { anyWords: p.weak!, withAny: PRODUCT_CONTEXT },
+    category: slug,
+    addTags: [slug],
+    priority: priority(slug),
+    description: `Talks about ${p.name}'s line of work and about the product or business side of it.`,
+  }));
+
+/**
+ * Infrastructure names that contain a business name without being about that business (preset D).
+ * E.g. the shared-memory database lives in a Neon project called "dairyforge" (<NEON_PROJECT_ID>).
+ */
+const INFRA_IGNORE: { pattern: string; why: string }[] = [
+  { pattern: String.raw`\b(?:https?|postgres(?:ql)?|ssh|git)://\S+`, why: 'URLs and connection strings.' },
+  { pattern: String.raw`\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+`, why: 'Email addresses and user@host logins.' },
+  { pattern: String.raw`(?<![\w/])[\w-]+(?:\.[\w-]+)*\.(?:com|net|org|io|app|dev|ai|co|shop|sh|cloud|me|xyz|tech)\b(?:/\S*)?`, why: 'Hostnames and domains.' },
+  { pattern: String.raw`(?<![\w])(?:~|\.{1,2})?(?:/[\w.@-]+){2,}/?`, why: 'File paths.' },
+  { pattern: String.raw`\bneon\s+(?:project|db|database)\s*[:=]?\s*["'\u0060]?[\w-]+["'\u0060]?`, why: 'Neon project names.' },
+  { pattern: String.raw`["'\u0060]?[\w-]+["'\u0060]?\s*\(\s*[a-z]+-[a-z]+-\d{6,}\s*\)`, why: 'A Neon project name with its id.' },
+  { pattern: String.raw`\b(?:[a-z]+-[a-z]+)-\d{6,}\b`, why: 'Cloud project ids like misty-lake-10000001.' },
+  { pattern: String.raw`\b(?:project|database|db|bucket|container|image|branch|schema)\s*[:=]\s*["'\u0060]?[\w-]+["'\u0060]?`, why: 'key=value infra settings.' },
+];
+
 export const PRESET_D: Rulebook = {
   id: 'preset-d',
   name: 'D — All-round default',
-  description: 'Personal, finance, code, and one shelf per business (Faith N Light, Helmian, DairyForge/FirstUse, Forge TMS, ...). Project beats topic; topic beats shape.',
+  description: 'Personal, finance, code, and one shelf per business (Faith N Light, Helmian, DairyForge/FirstUse, Forge TMS, ...). A business name files on its own; its everyday work words (milk, hauling, loads, dispatch) need product context too, otherwise driving and hauling talk is Personal. Infrastructure names (hosts, paths, Neon project ids) are ignored.',
   categories: [
     { slug: 'personal', name: 'Personal' }, { slug: 'finance', name: 'Finance' }, { slug: 'code', name: 'Code' },
     { slug: 'business', name: 'Business (general)' }, { slug: 'ai-tools', name: 'AI tools & agents' },
     ...projectCats.map((c) => ({ ...c, parent: 'business' })),
   ],
+  ignore: INFRA_IGNORE,
   rules: [
     tagRule('personal', ['personal']), tagRule('finance', ['finance', 'money']), tagRule('code', ['code']),
     ...Object.keys(PROJECTS).map((slug) => tagRule(slug, [slug, PROJECTS[slug].name])),
     // Personal beats project only when no business is named.
-    { id: 'content.personal', layer: 'content', when: { anyWords: PERSONAL, noneWords: Object.values(PROJECTS).flatMap((p) => p.words) }, category: 'personal', priority: 650, description: 'Personal life, no business named.' },
-    ...projectRules(600),
-    ...projectNotebookRules(550),
+    { id: 'content.personal', layer: 'content', when: { anyWords: PERSONAL, noneWords: [...STRONG_WORDS, ...AI_NICKNAMES] }, category: 'personal', priority: 650, description: 'Personal life, no business named.' },
+    ...projectRules(600, '', true),
+    // DairyForge's product context outranks a notebook name; generic trucking-product talk (Forge TMS) sits just
+    // below notebooks, so inside a DairyForge conversation it stays DairyForge.
+    ...projectContextRules((slug) => (slug === 'forge-tms' ? 545 : 590)),
+    { id: 'content.job-talk', layer: 'content', when: { shape: ['chat'], anyWords: [...JOB_TALK, ...JOB_WEAK], noneWords: [...STRONG_WORDS, ...PRODUCT_CONTEXT] }, category: 'personal', priority: 560, description: 'Driving and hauling talk (the day job), with no business named and nothing about the product.', addTags: ['job'] },
+    ...projectNotebookRules(550, '', true),
     topic('content.finance', 'finance', FINANCE, 400, 'Money with no business named (invoices, payments, tax).', ['money']),
     { id: 'shape.code', layer: 'shape', when: { shape: ['code', 'pr', 'commit', 'error'] }, category: 'code', priority: 200, description: 'It is code, a PR, a commit, or an error, with no business named.' },
     topic('content.code-words', 'code', CODE_WORDS, 190, 'Technical words, no business named.'),

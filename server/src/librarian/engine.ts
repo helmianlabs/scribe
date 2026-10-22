@@ -53,6 +53,12 @@ export function evaluateRule(
     if (hits.length !== w.allWords.length) return null;
     matched.push(`all of ${w.allWords.map((x) => `"${x}"`).join(', ')}`);
   }
+  if (w.withAny?.length) {
+    conditions++;
+    const hits = findWords(ctx.text, w.withAny);
+    if (!hits.length) return null;
+    matched.push(`with context word "${hits[0]}"`);
+  }
   if (w.noneWords?.length) {
     if (findWords(ctx.text, w.noneWords).length) return null;
   }
@@ -65,13 +71,27 @@ export function sortRules(rules: Rule[]): Rule[] {
   );
 }
 
+const ignoreCache = new Map<string, RegExp>();
+/** Blank out the rulebook's ignore patterns (infra names). Returns the cleaned text and what was blanked. */
+export function applyIgnore(text: string, book: Rulebook): { text: string; ignored: string[] } {
+  const ignored: string[] = [];
+  let out = text;
+  for (const ig of book.ignore ?? []) {
+    let re = ignoreCache.get(ig.pattern);
+    if (!re) { re = new RegExp(ig.pattern, 'giu'); ignoreCache.set(ig.pattern, re); }
+    out = out.replace(re, (m) => { ignored.push(m); return ' '; });
+  }
+  return { text: out, ignored };
+}
+
 /** File one memory. Pure and deterministic: same item + same rulebook = same filing. */
 export function classify(item: MemoryItem, book: Rulebook, extraRules: Rule[] = []): Filing {
   const raw = item.text ?? '';
   const tags = parseTags(raw);
-  const text = stripTagLine(raw);
+  const body = stripTagLine(raw);
+  const { text, ignored } = applyIgnore(body, book);
   const source = resolveSource(item);
-  const shape = detectShape(text);
+  const shape = detectShape(body); // shape looks at the untouched text (a PR link is still a PR)
   // A save_memory notebook is "Shared Memory — <category or source>": match only the part after the
   // dash, so the words "Shared Memory" never file everything into the Shared Memory project.
   const conv = notebookLabel(item.conversationName) ?? item.conversationName ?? '';
@@ -97,9 +117,12 @@ export function classify(item: MemoryItem, book: Rulebook, extraRules: Rule[] = 
     };
   }
   const rule = allRules.get(winner.ruleId)!;
+  const ignoredNote = ignored.length
+    ? ` Ignored as infrastructure names, not topic: ${[...new Set(ignored)].slice(0, 3).map((x) => `"${x.trim().slice(0, 40)}"`).join(', ')}.`
+    : '';
   return {
     itemId: item.id, category: winner.category!, tags: [...outTags].sort(), rulebook: book.id, winningRule: winner.ruleId, hits, shape, source,
-    explanation: `Filed in "${winner.category}" by rule ${winner.ruleId} (${winner.layer} layer): ${rule.description} Matched ${winner.matched.join(', ')}.`,
+    explanation: `Filed in "${winner.category}" by rule ${winner.ruleId} (${winner.layer} layer): ${rule.description} Matched ${winner.matched.join(', ')}.${ignoredNote}`,
   };
 }
 

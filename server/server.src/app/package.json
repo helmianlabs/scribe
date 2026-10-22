@@ -1,6 +1,6 @@
 {
   "name": "claude-memory-mcp-server",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Remote MCP server (Streamable HTTP + OAuth 2.1 + DCR) exposing search_memory over Sam's Claude conversation history in Neon.",
   "type": "module",
   "main": "dist/index.js",

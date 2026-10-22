@@ -13,7 +13,7 @@ import {
   type Filing, type MemoryItem, type Rule, type Rulebook,
 } from "./librarian/index.js";
 
-export const ENGINE_VERSION = "librarian-0.1.0";
+export const ENGINE_VERSION = "librarian-0.2.0";
 const NOT_INSTALLED = "The Librarian's tables are not installed in the database yet (migration 001_librarian.sql), so nothing can be recorded.";
 
 function isMissingTable(err: unknown): boolean {
