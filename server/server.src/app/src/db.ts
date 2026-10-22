@@ -192,3 +192,8 @@ export async function saveMemory(params: SaveMemoryParams): Promise<SaveMemoryRe
     client.release();
   }
 }
+
+// Librarian access: the read pool (read-only sessions) and the write pool (memory_rw).
+export function librarianPools(): { read: pg.Pool; write: pg.Pool } {
+  return { read: pool, write: writePool };
+}

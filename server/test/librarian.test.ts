@@ -49,7 +49,7 @@ test('personal only when no business named (D)', () => {
 });
 
 test('source layer feeds tags; shape alone files code in D', () => {
-  const f = classify(item(6, 'const a = 1;\nconst b = 2;\nreturn a + b;', { conversationName: 'Shared Memory — claude' }), PRESET_D);
+  const f = classify(item(6, 'const a = 1;\nconst b = 2;\nreturn a + b;', { conversationName: 'Shared Memory — claude', sender: 'claude' }), PRESET_D);
   assert.equal(f.category, 'code');
   assert.equal(f.source, 'claude');
   assert.ok(f.tags.includes('from:claude'));
@@ -107,7 +107,11 @@ test('plain-word custom rules', () => {
   assert.equal(r1.category, 'sales-leads');
   assert.equal(classify(item(15, 'Call Saadi tomorrow'), PRESET_D, [r1]).category, 'sales-leads');
   const r2 = parsePlainRule('anything from muse goes in muse notes', 'c2')!;
-  assert.equal(classify(item(16, 'hello', { conversationName: 'Shared Memory — muse' }), PRESET_D, [r2]).category, 'muse-notes');
+  assert.equal(classify(item(16, 'hello', { conversationName: 'Shared Memory — muse', sender: 'muse' }), PRESET_D, [r2]).category, 'muse-notes');
+  // save_memory category notebook files to that project; the words "Shared Memory" alone do not
+  assert.equal(classify(item(161, 'new mug idea', { conversationName: 'Shared Memory — faith n light', sender: 'grok' }), PRESET_D).category, 'faith-n-light');
+  assert.equal(classify(item(162, 'hello', { conversationName: 'Shared Memory — grok', sender: 'grok' }), PRESET_D).category, 'unsorted');
+  assert.equal(classify(item(163, 'hi', { sender: 'human' }), PRESET_D).source, 'claude-archive');
   const r3 = parsePlainRule('errors go in bugs and tag it urgent', 'c3')!;
   const f3 = classify(item(17, 'TypeError: x is undefined'), PRESET_D, [r3]);
   assert.equal(f3.category, 'bugs'); assert.ok(f3.tags.includes('urgent'));
@@ -140,4 +144,22 @@ test('distribution sums to 100%', () => {
   const d = distribution(f);
   assert.equal(d.reduce((a, b) => a + b.count, 0), 4);
   assert.equal(d[0].category, 'forge-tms');
+});
+
+test('conversation context layer: short turns inherit a dominant shelf, mixed chats stay unsorted', async () => {
+  const { classifyBatch, CONTEXT_RULE_ID } = await import('../src/librarian/index.ts');
+  const conv = 'Route planning';
+  const items = [
+    item(30, 'Forge TMS load board is slow', { conversationName: conv }),
+    item(31, 'Cora missed the route code', { conversationName: conv }),
+    item(32, 'dispatcher wants an alert', { conversationName: conv }),
+    item(33, 'yeah do that', { conversationName: conv }),
+    item(40, 'invoice', { conversationName: 'Mixed' }), item(41, 'Forge TMS', { conversationName: 'Mixed' }),
+    item(42, 'Faith N Light', { conversationName: 'Mixed' }), item(43, 'ok', { conversationName: 'Mixed' }),
+  ];
+  const f = classifyBatch(items, PRESET_D);
+  assert.equal(f[3].category, 'forge-tms');
+  assert.equal(f[3].winningRule, CONTEXT_RULE_ID);
+  assert.match(f[3].explanation, /3 of 3/);
+  assert.equal(f[7].category, UNSORTED);
 });

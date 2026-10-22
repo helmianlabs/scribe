@@ -20,9 +20,12 @@ function notebookLabel(conversationName) {
 function normalise(s) {
   return s.trim().toLowerCase().replace(/\s+/g, " ");
 }
+var CHAT_ROLES = /* @__PURE__ */ new Set(["human", "assistant", "user", "system"]);
 function resolveSource(item) {
   if (item.source && item.source.trim()) return normalise(item.source);
-  return notebookLabel(item.conversationName);
+  const s = item.sender ? normalise(item.sender) : "";
+  if (s && !CHAT_ROLES.has(s)) return s;
+  return s ? "claude-archive" : null;
 }
 
 // src/librarian/shape.ts
@@ -141,7 +144,7 @@ function classify(item, book, extraRules = []) {
   const text = stripTagLine(raw);
   const source = resolveSource(item);
   const shape = detectShape(text);
-  const conv = notebookLabel(item.conversationName) ? "" : item.conversationName ?? "";
+  const conv = notebookLabel(item.conversationName) ?? item.conversationName ?? "";
   const ctx = { text, source, shape, tags, conv };
   const hits = [];
   for (const rule2 of sortRules([...book.rules, ...extraRules])) {
@@ -185,19 +188,20 @@ function classify(item, book, extraRules = []) {
 var PROJECTS = {
   "faith-n-light": { name: "Faith N Light", words: ["faith n light", "faith and light", "faith & light", "faithnlight", "fnl", "printify", "tumbler", "beanie", "dad cap", "kjv", "scripture", "meta shop"] },
   helmian: { name: "Helmian", words: ["helmian", "helmion", "helium runner", "herald", "bridge device", "runner box"] },
-  "dairyforge-firstuse": { name: "DairyForge / FirstUse", words: ["dairyforge", "dairy forge", "firstuse", "first use", "dairy co-op", "co-op", "milk hauler", "wash state", "pump start", "magic valley", "dfa", "dairyport"] },
-  "forge-tms": { name: "Forge TMS", words: ["forge tms", "forge-tms", "cora", "load board", "dispatcher", "route code", "freight", "carrier", "hos", "eld", "fleet fwd"] },
+  "dairyforge-firstuse": { name: "DairyForge / FirstUse", words: ["dairyforge", "dairy forge", "firstuse", "first use", "dairy co-op", "co-op", "milk hauler", "wash state", "pump start", "magic valley", "dfa", "dairyport", "dairy", "milk", "hauling", "hauler", "haulers", "saadi", "saudi", "creamery", "dairyman", "dairymen", "silo", "silos", "gallons", "pump", "pumping", "milk pickup", "wash", "tanker"] },
+  "forge-tms": { name: "Forge TMS", words: ["forge tms", "forge-tms", "cora", "load board", "dispatcher", "route code", "freight", "carrier", "hos", "eld", "fleet fwd", "mcleod", "tms", "dispatch", "load board", "loads", "trucking", "broker", "shipper"] },
   "shared-memory": { name: "Shared Memory", words: ["shared memory", "claude memory", "claude_memory", "search_memory", "save_memory", "librarian", "mcp door", "beacons"] },
   caldmere: { name: "Caldmere", words: ["caldmere", "unity", "blender", "centaur"] },
   thinkinbuddy: { name: "Thinkinbuddy", words: ["thinkinbuddy", "thinking buddy", "site diary", "actionable app"] }
 };
 var FINANCE = ["invoice", "invoices", "payment", "paid", "refund", "stripe", "bank", "budget", "tax", "taxes", "irs", "payroll", "expense", "receipt", "subscription", "billing", "price", "pricing", "revenue", "profit", "loan", "credit card", "owe", "owed", "paddle", "lemon squeezy", "gumroad", "dollars"];
-var PERSONAL = ["family", "wife", "kids", "son", "daughter", "mom", "dad", "doctor", "diabetes", "insulin", "blood sugar", "vet", "dog", "birthday", "church", "prayer", "vacation", "health", "appointment", "banner"];
+var PERSONAL = ["family", "wife", "kids", "son", "daughter", "mom", "dad", "doctor", "diabetes", "insulin", "blood sugar", "vet", "dog", "birthday", "church", "prayer", "vacation", "health", "appointment", "banner", "brother", "sister", "cousin", "girlfriend", "feelings", "mental", "stress", "stressed", "tired", "sleep", "exhausted", "drive home", "my life", "god", "jesus", "faith in god", "carnival"];
 var CODE_WORDS = ["repo", "github", "branch", "deploy", "vercel", "docker", "migration", "schema", "typescript", "javascript", "python", "api", "endpoint", "bug", "refactor", "build", "pnpm", "npm", "postgres", "neon", "sql", "hetzner", "caddy", "mcp", "oauth", "worktree"];
 var MARKETING = ["linkedin", "facebook", "instagram", "tiktok", "youtube", "reel", "reels", "newsletter", "seo", "outreach", "campaign", "landing page", "waitlist", "product hunt"];
 var RESEARCH = ["research", "competitor", "compare", "comparison", "market", "report", "study", "pricing research"];
 var PLANNING = ["plan", "roadmap", "todo", "to-do", "next step", "next steps", "punch list", "handoff", "spec", "decision", "decided"];
 var DESIGN = ["design", "mockup", "logo", "print file", "artwork", "font", "color", "screenshot", "ui", "ux"];
+var AI_TOOLS = ["claude", "claude code", "chatgpt", "gpt", "gemini", "grok", "jarvis", "codex", "cursor", "muse", "midjourney", "llm", "prompt", "prompts", "agent", "agents", "subagent", "voice chat", "tts", "elevenlabs", "handoff", "context window", "/clear", "clear command"];
 
 // src/librarian/presets.ts
 var projectRules = (priority, prefix = "") => Object.entries(PROJECTS).map(([slug2, p]) => ({
@@ -313,6 +317,7 @@ var PRESET_D = {
     { slug: "finance", name: "Finance" },
     { slug: "code", name: "Code" },
     { slug: "business", name: "Business (general)" },
+    { slug: "ai-tools", name: "AI tools & agents" },
     ...projectCats.map((c) => ({ ...c, parent: "business" }))
   ],
   rules: [
@@ -327,7 +332,8 @@ var PRESET_D = {
     topic("content.finance", "finance", FINANCE, 400, "Money with no business named (invoices, payments, tax).", ["money"]),
     { id: "shape.code", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "code", priority: 200, description: "It is code, a PR, a commit, or an error, with no business named." },
     topic("content.code-words", "code", CODE_WORDS, 190, "Technical words, no business named."),
-    topic("content.business", "business", [...MARKETING, "customer", "customers", "client", "sales", "business", "llc"], 180, "General business, no specific business named."),
+    topic("content.business", "business", [...MARKETING, "customer", "customers", "client", "sales", "business", "llc", "pitch", "investor", "investors", "licensing", "insurance", "pilot", "launch", "contract"], 180, "General business, no specific business named."),
+    topic("content.ai-tools", "ai-tools", AI_TOOLS, 170, "About the AI tools themselves (Claude, ChatGPT, agents, handoffs)."),
     ...sharedTagRules
   ]
 };

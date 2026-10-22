@@ -1,5 +1,5 @@
 import type { Rule, Rulebook } from './types.ts';
-import { CODE_WORDS, DESIGN, FINANCE, MARKETING, PERSONAL, PLANNING, PROJECTS, RESEARCH } from './vocab.ts';
+import { AI_TOOLS, CODE_WORDS, DESIGN, FINANCE, MARKETING, PERSONAL, PLANNING, PROJECTS, RESEARCH } from './vocab.ts';
 
 /**
  * Setup presets the customer picks at sign-up. Each becomes their rulebook.
@@ -113,7 +113,8 @@ export const PRESET_D: Rulebook = {
   description: 'Personal, finance, code, and one shelf per business (Faith N Light, Helmian, DairyForge/FirstUse, Forge TMS, ...). Project beats topic; topic beats shape.',
   categories: [
     { slug: 'personal', name: 'Personal' }, { slug: 'finance', name: 'Finance' }, { slug: 'code', name: 'Code' },
-    { slug: 'business', name: 'Business (general)' }, ...projectCats.map((c) => ({ ...c, parent: 'business' })),
+    { slug: 'business', name: 'Business (general)' }, { slug: 'ai-tools', name: 'AI tools & agents' },
+    ...projectCats.map((c) => ({ ...c, parent: 'business' })),
   ],
   rules: [
     tagRule('personal', ['personal']), tagRule('finance', ['finance', 'money']), tagRule('code', ['code']),
@@ -125,7 +126,8 @@ export const PRESET_D: Rulebook = {
     topic('content.finance', 'finance', FINANCE, 400, 'Money with no business named (invoices, payments, tax).', ['money']),
     { id: 'shape.code', layer: 'shape', when: { shape: ['code', 'pr', 'commit', 'error'] }, category: 'code', priority: 200, description: 'It is code, a PR, a commit, or an error, with no business named.' },
     topic('content.code-words', 'code', CODE_WORDS, 190, 'Technical words, no business named.'),
-    topic('content.business', 'business', [...MARKETING, 'customer', 'customers', 'client', 'sales', 'business', 'llc'], 180, 'General business, no specific business named.'),
+    topic('content.business', 'business', [...MARKETING, 'customer', 'customers', 'client', 'sales', 'business', 'llc', 'pitch', 'investor', 'investors', 'licensing', 'insurance', 'pilot', 'launch', 'contract'], 180, 'General business, no specific business named.'),
+    topic('content.ai-tools', 'ai-tools', AI_TOOLS, 170, 'About the AI tools themselves (Claude, ChatGPT, agents, handoffs).'),
     ...sharedTagRules,
   ],
 };

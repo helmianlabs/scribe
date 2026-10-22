@@ -72,9 +72,9 @@ export function classify(item: MemoryItem, book: Rulebook, extraRules: Rule[] = 
   const text = stripTagLine(raw);
   const source = resolveSource(item);
   const shape = detectShape(text);
-  // A save_memory notebook ("Shared Memory — <source>") names the writer, not the topic, so it
-  // feeds the source layer only and is never matched as a topic.
-  const conv = notebookLabel(item.conversationName) ? '' : item.conversationName ?? '';
+  // A save_memory notebook is "Shared Memory — <category or source>": match only the part after the
+  // dash, so the words "Shared Memory" never file everything into the Shared Memory project.
+  const conv = notebookLabel(item.conversationName) ?? item.conversationName ?? '';
   const ctx = { text, source, shape, tags, conv };
 
   const hits: RuleHit[] = [];
@@ -114,4 +114,41 @@ export function distribution(filings: Filing[]): { category: string; count: numb
   return [...counts.entries()]
     .map(([category, count]) => ({ category, count, pct: Math.round((count / n) * 1000) / 10 }))
     .sort((a, b) => b.count - a.count || a.category.localeCompare(b.category));
+}
+
+/**
+ * Conversation context layer (batch). A chat turn like "yeah, do that" has no words of its own, but its
+ * conversation does. After every item is filed on its own, an UNSORTED item inherits its conversation's
+ * dominant shelf when that shelf holds at least `minCount` items and `minShare` of the conversation's
+ * filed items. Deterministic, and the explanation names the conversation and the numbers.
+ */
+export const CONTEXT_RULE_ID = 'context.conversation';
+export function classifyBatch(items: MemoryItem[], book: Rulebook, extraRules: Rule[] = [], opts = { minCount: 3, minShare: 0.4 }): Filing[] {
+  const filings = items.map((i) => classify(i, book, extraRules));
+  const byConv = new Map<string, number[]>();
+  items.forEach((it, idx) => {
+    const k = it.conversationName ?? '';
+    if (!k) return;
+    if (!byConv.has(k)) byConv.set(k, []);
+    byConv.get(k)!.push(idx);
+  });
+  for (const [conv, idxs] of byConv) {
+    const counts = new Map<string, number>();
+    let filed = 0;
+    for (const i of idxs) if (filings[i].category !== UNSORTED) { filed++; counts.set(filings[i].category, (counts.get(filings[i].category) ?? 0) + 1); }
+    if (!filed) continue;
+    const [top, n] = [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))[0];
+    if (n < opts.minCount || n / filed < opts.minShare) continue;
+    for (const i of idxs) {
+      if (filings[i].category !== UNSORTED) continue;
+      filings[i] = {
+        ...filings[i],
+        category: top,
+        winningRule: CONTEXT_RULE_ID,
+        hits: [...filings[i].hits, { ruleId: CONTEXT_RULE_ID, layer: 'content', category: top, priority: 0, matched: [`conversation "${conv.slice(0, 80)}"`] }],
+        explanation: `Filed in "${top}" with the rest of its conversation "${conv.slice(0, 80)}" (${n} of ${filed} filed messages there are "${top}"). It had no trigger words of its own.`,
+      };
+    }
+  }
+  return filings;
 }

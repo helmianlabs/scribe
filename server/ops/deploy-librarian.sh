@@ -1,71 +1,69 @@
 #!/usr/bin/env bash
-# ONE-COMMAND, REVERSIBLE deploy of the Librarian onto the live claude-memory-mcp container.
-# DO NOT RUN WITHOUT SAM'S GO-AHEAD. Runs ON the box as root:  bash deploy-librarian.sh
-# Precondition: migrations/001_librarian.sql already applied as neondb_owner (Neon SQL editor),
-#               and the server's save_memory handler patched to call fileMessage() (docs/SERVER_PATCH.md).
-# Mirrors spec 2.5: backup dir + rollback image tag + health check + automatic rollback.
+# One-command, reversible deploy of the Librarian build of claude-memory-mcp. Runs ON the box as root.
+#   bash deploy-librarian.sh <path-to-new-app-dir>
+# Steps: backup app dir -> tag running image for rollback -> build new image -> start a CANDIDATE on
+# 127.0.0.1:18081 and verify it -> swap production (same flags as deploy-write.sh) -> verify live ->
+# automatic rollback (old image + old app dir) on any failure.
 set -euo pipefail
-umask 077   # backup files hold the container env (secrets): root-only
-APP=/opt/claude-memory-mcp
+umask 077
+NEW_SRC=${1:?usage: deploy-librarian.sh <new app dir>}
+ROOT=/opt/claude-memory-mcp
+APP=$ROOT/app
 NAME=claude-memory-mcp
-STAMP=$(date +%Y%m%d-%H%M)
+STAMP=$(date -u +%Y%m%d-%H%M%S)
 BACKUP=/opt/backups/claude-memory-mcp-$STAMP-prelibrarian
 ROLLBACK_TAG=claude-memory-mcp:prelibrarian-$STAMP
 NEW_TAG=claude-memory-mcp:librarian-$STAMP
-HEALTH_URL=${HEALTH_URL:-https://<SERVER_HOST>/.well-known/oauth-protected-resource/mcp}
+VERIFY=$ROOT/verify-librarian.mjs
+run_prod() { docker run -d --name "$NAME" --restart unless-stopped --env-file "$ROOT/app.env" -p 127.0.0.1:8080:8080 "$1" >/dev/null; }
+wait_healthy() { for i in $(seq 1 30); do sleep 1; curl -sf "http://localhost:$1/healthz" >/dev/null 2>&1 && return 0; done; return 1; }
 
-echo "1/6 backup $APP -> $BACKUP"
-mkdir -p "$BACKUP" && cp -a "$APP"/. "$BACKUP"/
-
-CUR_IMAGE=$(docker inspect -f '{{.Config.Image}}' "$NAME")
-echo "2/6 tag running image $CUR_IMAGE as $ROLLBACK_TAG"
+echo "1/7 backup $APP -> $BACKUP/app"
+mkdir -p "$BACKUP" && cp -a "$APP" "$BACKUP/app"
+echo "2/7 tag running image as $ROLLBACK_TAG"
 docker tag "$(docker inspect -f '{{.Image}}' "$NAME")" "$ROLLBACK_TAG"
-docker inspect "$NAME" > "$BACKUP/container-inspect.json"
+echo "$ROLLBACK_TAG" > "$BACKUP/rollback-tag.txt"
 
-echo "3/6 build $NEW_TAG from $APP"
-docker build -t "$NEW_TAG" "$APP"
+echo "3/7 install new source + build $NEW_TAG"
+rsync -a --delete --exclude node_modules --exclude dist --exclude '.env*' "$NEW_SRC"/ "$APP"/
+if ! docker build -q -t "$NEW_TAG" "$APP" >/dev/null; then
+  echo "BUILD FAILED - restoring app dir, production untouched"; rsync -a --delete "$BACKUP/app"/ "$APP"/; exit 1
+fi
 
-echo "4/6 swap container (same env-file, ports, network, restart policy as before)"
-RUN_ARGS=$(python3 - "$BACKUP/container-inspect.json" <<'PY'
-import json,sys,shlex
-c=json.load(open(sys.argv[1]))[0]; h=c['HostConfig']; a=[]
-for p,b in (h.get('PortBindings') or {}).items():
-    for x in b or []: ip=x.get('HostIp'); a+=['-p', (f"{ip}:" if ip else '')+f"{x['HostPort']}:{p}"]
-if h.get('NetworkMode') not in (None,'default','bridge'): a+=['--network',h['NetworkMode']]
-r=h.get('RestartPolicy',{}).get('Name'); a+=['--restart', r or 'unless-stopped']
-for e in c['Config'].get('Env') or []: a+=['-e',e]
-for m in h.get('Binds') or []: a+=['-v',m]
-print(' '.join(shlex.quote(x) for x in a))
-PY
-)
-echo "$RUN_ARGS" > "$BACKUP/run-args.txt"; chmod 600 "$BACKUP/run-args.txt" "$BACKUP/container-inspect.json"
-docker rm -f "$NAME" >/dev/null
-eval docker run -d --name "$NAME" $RUN_ARGS "$NEW_TAG" >/dev/null
+echo "4/7 candidate on 127.0.0.1:18081 + verify"
+docker rm -f "$NAME-candidate" >/dev/null 2>&1 || true
+docker run -d --name "$NAME-candidate" --env-file "$ROOT/app.env" -p 127.0.0.1:18081:8080 "$NEW_TAG" >/dev/null
+if ! wait_healthy 18081 || ! node "$VERIFY" http://localhost:18081; then
+  docker logs --tail 30 "$NAME-candidate" || true
+  docker rm -f "$NAME-candidate" >/dev/null
+  echo "CANDIDATE FAILED - restoring app dir, production untouched"; rsync -a --delete "$BACKUP/app"/ "$APP"/; exit 1
+fi
+docker rm -f "$NAME-candidate" >/dev/null
 
 rollback() {
   echo "ROLLBACK -> $ROLLBACK_TAG"
+  docker logs --tail 30 "$NAME" || true
   docker rm -f "$NAME" >/dev/null 2>&1 || true
-  eval docker run -d --name "$NAME" $RUN_ARGS "$ROLLBACK_TAG" >/dev/null
+  run_prod "$ROLLBACK_TAG"
+  rsync -a --delete "$BACKUP/app"/ "$APP"/
+  wait_healthy 8080 && echo "rollback healthy"
   exit 1
 }
-
-echo "5/6 health check"
-ok=0
-for i in $(seq 1 20); do
-  sleep 3
-  if curl -fsS -m 5 "$HEALTH_URL" | grep -q '"memory.write"'; then ok=1; break; fi
-done
-[ "$ok" = 1 ] || rollback
-# the door must still refuse anonymous calls
+echo "5/7 swap production to $NEW_TAG"
+docker rm -f "$NAME" >/dev/null
+run_prod "$NEW_TAG"
+wait_healthy 8080 || rollback
+echo "6/7 verify live (local port and public door)"
+node "$VERIFY" http://localhost:8080 || rollback
 code=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'content-type: application/json' -d '{}' https://<SERVER_HOST>/mcp)
 [ "$code" = 401 ] || rollback
-
-echo "6/6 live: $NEW_TAG   rollback any time:  bash $APP/rollback-librarian.sh $ROLLBACK_TAG"
-cat > "$APP/rollback-librarian.sh" <<RB
+cat > "$ROOT/rollback-librarian.sh" <<RB
 #!/usr/bin/env bash
+# Roll production back to the image that ran before the Librarian deploy of $STAMP.
 set -euo pipefail
 docker rm -f $NAME
-eval docker run -d --name $NAME \$(cat $BACKUP/run-args.txt) \${1:-$ROLLBACK_TAG}
+docker run -d --name $NAME --restart unless-stopped --env-file $ROOT/app.env -p 127.0.0.1:8080:8080 $ROLLBACK_TAG
+rsync -a --delete $BACKUP/app/ $APP/
 RB
-chmod 700 "$APP/rollback-librarian.sh"
-echo "Note: each connected AI may ask Sam to approve access again after the restart (one click + passphrase)."
+chmod 700 "$ROOT/rollback-librarian.sh"
+echo "7/7 LIVE: $NEW_TAG   rollback: bash $ROOT/rollback-librarian.sh   backup: $BACKUP"

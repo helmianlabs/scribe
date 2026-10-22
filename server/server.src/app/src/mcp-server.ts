@@ -6,7 +6,8 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { searchMemory, saveMemory } from "./db.js";
+import { searchMemory, saveMemory, librarianPools } from "./db.js";
+import { Librarian } from "./librarian-tools.js";
 import { CHARACTER_LIMIT } from "./config.js";
 
 const SearchMemoryInputSchema = z
@@ -34,10 +35,31 @@ const SearchMemoryInputSchema = z
 
 type SearchMemoryInput = z.infer<typeof SearchMemoryInputSchema>;
 
+let librarian: Librarian | null = null;
+function getLibrarian(): Librarian {
+  if (!librarian) {
+    const { read, write } = librarianPools();
+    librarian = new Librarian(read, write);
+  }
+  return librarian;
+}
+
+function jsonResult(output: Record<string, unknown>) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(output) }],
+    structuredContent: output,
+  };
+}
+
+function errorResult(prefix: string, err: unknown) {
+  const msg = err instanceof Error ? err.message : String(err);
+  return { content: [{ type: "text" as const, text: `${prefix}: ${msg}` }], isError: true };
+}
+
 export function buildMcpServer(scopes: string[] = []): McpServer {
   const server = new McpServer({
     name: "claude-memory-mcp-server",
-    version: "1.1.0",
+    version: "1.2.0",
   });
 
   server.registerTool(
@@ -214,7 +236,15 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
           category: params.category,
           tags: params.tags,
         });
-        const output = { saved: true, ...saved };
+        // The Librarian files it (never blocks or fails the save).
+        const filing = await getLibrarian().fileSaved({
+          id: saved.message_id,
+          text: params.tags?.length ? `[tags: ${params.tags.join(", ")}]\n${params.content}` : params.content,
+          sender: params.source,
+          source: params.source,
+          conversationName: saved.conversation_name,
+        });
+        const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded };
         return {
           content: [{ type: "text" as const, text: JSON.stringify(output) }],
           structuredContent: output,
@@ -231,6 +261,73 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
           isError: true,
         };
       }
+    }
+  );
+
+  // ---------------------------------------------------------------- Librarian
+  server.registerTool(
+    "list_unsorted",
+    {
+      title: "List the Unsorted Tray",
+      description: "List memories the Librarian could not file (the unsorted tray). Nothing in the tray is lost; move an item with move_memory and the Librarian may learn a rule from it. Read-only.",
+      inputSchema: { limit: z.number().int().min(1).max(100).default(20).describe("Max items (default 20).") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (p: { limit?: number }) => {
+      try { return jsonResult(await getLibrarian().listUnsorted(p.limit ?? 20)); } catch (e) { return errorResult("Error listing unsorted", e); }
+    }
+  );
+
+  server.registerTool(
+    "explain_filing",
+    {
+      title: "Explain a Filing",
+      description: "Say which shelf a memory is on and the exact rule that put it there. Takes the message_id that save_memory returned. Read-only.",
+      inputSchema: { message_id: z.number().int().min(1).describe("Message id of the memory.") },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (p: { message_id: number }) => {
+      try { return jsonResult(await getLibrarian().explain(p.message_id)); } catch (e) { return errorResult("Error explaining filing", e); }
+    }
+  );
+
+  const needWrite = (tool: string) => ({
+    content: [{ type: "text" as const, text: `${tool} needs the memory.write scope. Reconnect the connector and approve read+write access.` }],
+    isError: true,
+  });
+
+  server.registerTool(
+    "move_memory",
+    {
+      title: "Move a Memory to Another Shelf",
+      description: "Move a memory to another shelf (category). The move is recorded (history is kept, nothing is overwritten) and the Librarian may learn a trigger word from it so similar memories file there next time. Requires memory.write.",
+      inputSchema: {
+        message_id: z.number().int().min(1),
+        to_category: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9/_-]*$/i, "category slug, e.g. 'helmian' or 'personal'"),
+        source: z.string().min(1).max(40).describe("Who is moving it, e.g. 'sam', 'claude.ai', 'grok'."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async (p: { message_id: number; to_category: string; source: string }) => {
+      if (!canWrite) return needWrite("move_memory");
+      try { return jsonResult(await getLibrarian().move(p.message_id, p.to_category.toLowerCase(), p.source)); } catch (e) { return errorResult("Error moving memory", e); }
+    }
+  );
+
+  server.registerTool(
+    "add_rule",
+    {
+      title: "Add a Filing Rule",
+      description: 'Add a plain-word filing rule for the Librarian, e.g. "anything mentioning invoices goes in finance", "anything from grok goes in grok notes", "errors go in bugs and tag it urgent". Requires memory.write.',
+      inputSchema: {
+        rule: z.string().min(5).max(300),
+        source: z.string().min(1).max(40).describe("Who is adding it."),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    async (p: { rule: string; source: string }) => {
+      if (!canWrite) return needWrite("add_rule");
+      try { return jsonResult(await getLibrarian().addRule(p.rule, p.source)); } catch (e) { return errorResult("Error adding rule", e); }
     }
   );
 
