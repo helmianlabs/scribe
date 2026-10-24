@@ -77,7 +77,7 @@ export async function deliverAlert(target: AlertTarget, flags: AlertFlag[], fetc
   if (!due.length) return result;
 
   const top = due.reduce((a, b) => (severityRank(b.severity) > severityRank(a.severity) ? b : a));
-  const subject = `[${top.severity.toUpperCase()}] ${due.length} flag${due.length > 1 ? "s" : ""} in your shared memory`;
+  const subject = `[${top.severity.toUpperCase()}] ${due.length} flag${due.length > 1 ? "s" : ""} in Helmian Scribe`;
   const payload = {
     type: "flags.raised",
     tenant_id: target.tenantId,

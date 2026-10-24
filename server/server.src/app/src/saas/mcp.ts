@@ -7,12 +7,12 @@ import { z } from "zod";
 import type { Db } from "./db.js";
 import type { Tenant } from "./accounts.js";
 import { planFor, LimitError, type Plan } from "./plans.js";
-import { countCall, searchMemory, saveMemory, TenantLibrarian } from "./memory.js";
+import { countCall, searchMemory, saveMemory, getMessageById, TenantLibrarian } from "./memory.js";
 import { prepareContent, findingsToFlags, recordFlags, summarize } from "../flags/service.js";
 import { listFlags } from "../flags/store.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
 import type { AlertTarget } from "../flags/alerts.js";
-import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "../postoffice/tools.js";
+import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "../courier/tools.js";
 
 const CHARACTER_LIMIT = 25000;
 
@@ -29,7 +29,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   const { db, tenant, scopes } = ctx;
   const plan = planFor(tenant.plan, ctx.limitsOverride as never);
   const canWrite = scopes.includes("memory.write");
-  const server = withInboxHint(new McpServer({ name: "shared-memory", version: "2.0.0-saas" }, { instructions: SERVER_INSTRUCTIONS }));
+  const server = withInboxHint(new McpServer({ name: "helmian-scribe", title: "Helmian Scribe", version: "2.0.0-saas" }, { instructions: SERVER_INSTRUCTIONS }));
 
   /** Meter + run in a tenant transaction; limits and errors become plain tool errors. */
   async function run(kind: "call" | "save", fn: (q: Parameters<Parameters<Db["tenant"]>[1]>[0]) => Promise<Record<string, unknown>>) {
@@ -45,7 +45,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
 
   server.registerTool("search_memory", {
     title: "Search Memory",
-    description: "Search this account's shared memory (case-insensitive substring), newest first. Returns message_id, notebook, sender, time and a snippet.",
+    description: "Search this account's Helmian Scribe memory (case-insensitive substring), newest first. Returns message_id, notebook, sender, time and a snippet.",
     inputSchema: {
       query: z.string().min(1).max(500),
       since: z.string().optional().describe("ISO-8601 lower bound"),
@@ -57,6 +57,38 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     const total = rows.length;
     while (JSON.stringify(rows).length > CHARACTER_LIMIT && rows.length > 1) rows = rows.slice(0, Math.floor(rows.length / 2));
     return { total, returned: rows.length, truncated: rows.length < total, results: rows };
+  }));
+
+  const READ_MEMORY_PAGE = 8000;
+  server.registerTool("read_memory", {
+    title: "Read a Full Memory by ID",
+    description: `Fetch the complete text of one memory by its stable id. search_memory returns only the first 300 characters of each message; this tool returns the whole letter. Use it after search_memory: take the "message_id" from a search result (or from save_memory) and read the full message. Responses carry at most ${READ_MEMORY_PAGE} characters of text; if a response includes next_offset, call again with offset set to that value to fetch the next chunk. Returns { id, sender, created_at, conversation_name, text, text_length, offset, returned_chars, next_offset }; next_offset is null when the whole message has been returned. Read-only.`,
+    inputSchema: {
+      message_id: z.number().int().min(1).describe("The stable numeric message id, as shown in search_memory results or returned by save_memory."),
+      offset: z.number().int().min(0).default(0).describe("Character offset for very long messages. If a previous read_memory call returned next_offset, pass that value to fetch the next chunk."),
+    },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (p: { message_id: number; offset?: number }) => run("call", async (q) => {
+    const msg = await getMessageById(q, tenant.id, p.message_id);
+    if (!msg) return { error: `No message found with id ${p.message_id}. Check the id from a search_memory result and try again.` };
+    const total = msg.text.length;
+    const offset = Math.min(p.offset ?? 0, total);
+    const chunk = msg.text.slice(offset, offset + READ_MEMORY_PAGE);
+    const nextOffset = offset + chunk.length < total ? offset + chunk.length : null;
+    return {
+      id: msg.id,
+      sender: msg.sender,
+      created_at: msg.created_at,
+      conversation_name: msg.conversation_name,
+      text: chunk,
+      text_length: total,
+      offset,
+      returned_chars: chunk.length,
+      next_offset: nextOffset,
+      ...(nextOffset !== null
+        ? { note: `This message is ${total} characters long. You are reading characters ${offset}–${offset + chunk.length - 1}. Call read_memory again with offset ${nextOffset} to continue.` }
+        : {}),
+    } as Record<string, unknown>;
   }));
 
   server.registerTool("save_memory", {
@@ -153,7 +185,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (p: { min_severity?: Severity; category?: string; since?: string; limit?: number }) => run("call", async (q) => listFlags(q, tenant.id, p) as unknown as Record<string, unknown>));
 
-  // ---------------------------------------------------------------- Post office
+  // ---------------------------------------------------------------- Helmian Courier
   registerPostOfficeTools(server, {
     canWrite, tenantId: tenant.id,
     identity: { clientId: ctx.clientId ?? null, clientName: ctx.clientName ?? null },

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Creates the Shared Memory products and monthly prices in Stripe. TEST MODE ONLY by default.
+// Creates the Helmian Scribe products and monthly prices in Stripe. TEST MODE ONLY by default.
 //
 //   node scripts/stripe-create-products.mjs            # dry run: prints what it would create
 //   STRIPE_SECRET_KEY=sk_test_... node scripts/stripe-create-products.mjs --apply
@@ -11,8 +11,8 @@
 import Stripe from "stripe";
 
 const PLANS = [
-  { lookup: "shared_memory_pro_monthly", product: "Shared Memory Pro", plan: "pro", cents: 1500, desc: "Hosted shared memory for every AI you use: 100k memories, 20k calls/day, Librarian, Flags, post office." },
-  { lookup: "shared_memory_team_monthly", product: "Shared Memory Team", plan: "team", cents: 4900, desc: "Shared memory for a team and its agents: 1M memories, 100k calls/day, 10 members." },
+  { lookup: "helmian_scribe_pro_monthly", product: "Helmian Scribe Pro", plan: "pro", cents: 1500, desc: "One hosted memory for every AI you use: 100k memories, 20k calls/day, the Librarian, Flags and the Courier." },
+  { lookup: "helmian_scribe_team_monthly", product: "Helmian Scribe Team", plan: "team", cents: 4900, desc: "Helmian Scribe for a team and its agents: 1M memories, 100k calls/day, 10 members." },
 ];
 
 const apply = process.argv.includes("--apply");
@@ -35,7 +35,7 @@ for (const p of PLANS) {
   const found = await stripe.prices.list({ lookup_keys: [p.lookup], limit: 1 });
   let price = found.data[0];
   if (!price) {
-    const product = await stripe.products.create({ name: p.product, description: p.desc, metadata: { plan: p.plan, app: "shared-memory" } });
+    const product = await stripe.products.create({ name: p.product, description: p.desc, metadata: { plan: p.plan, app: "helmian-scribe" } });
     price = await stripe.prices.create({ product: product.id, currency: "usd", unit_amount: p.cents, recurring: { interval: "month" }, lookup_key: p.lookup, metadata: { plan: p.plan } });
     console.log(`created ${p.product} -> ${price.id}`);
   } else console.log(`reused ${p.product} -> ${price.id}`);

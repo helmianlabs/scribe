@@ -4,6 +4,12 @@
  *  - With no STRIPE_SECRET_KEY, checkout and portal return clearly-marked mock URLs.
  *  - Webhooks are accepted only with a valid Stripe-Signature (STRIPE_WEBHOOK_SECRET);
  *    with no secret configured the endpoint answers 503 and changes nothing.
+ *  - checkout.session.completed activates a plan only when the session was actually
+ *    PAID (payment_status "paid", or "no_payment_required" for trials / fully
+ *    discounted checkouts). A completed-but-unpaid session activates nothing.
+ *  - Webhook idempotency tracks the APPLY, not just the sighting (migration 007):
+ *    an event whose apply failed stays 'failed' in stripe_events and Stripe's
+ *    redelivery reprocesses it; only successfully applied events suppress duplicates.
  */
 import Stripe from "stripe";
 import type { Db } from "./db.js";
@@ -28,7 +34,7 @@ export class Billing {
     if (stripeOverride) { this.stripe = stripeOverride; this.mode = "test"; }
     else if (key) {
       assertTestKey(key, cfg.stripe.allowLive);
-      this.stripe = new Stripe(key, { appInfo: { name: "shared-memory-saas" } });
+      this.stripe = new Stripe(key, { appInfo: { name: "helmian-scribe" } });
       this.mode = /_live_/.test(key) ? "live" : "test";
     } else { this.stripe = null; this.mode = "mock"; }
   }
@@ -92,11 +98,39 @@ export class Billing {
     }
     if (event.livemode && !this.cfg.stripe.allowLive) return { status: 400, body: { error: "Live-mode events are not accepted by this build." } };
 
-    const seen = await this.db.control.query("INSERT INTO stripe_events (id, type) VALUES ($1,$2) ON CONFLICT (id) DO NOTHING RETURNING id", [event.id, event.type]);
-    if (!seen.rows.length) return { status: 200, body: { received: true, duplicate: true } };
+    // Claim the event (apply tracking: migration 007). A row already marked
+    // 'applied' is a true duplicate and is suppressed below. A row in
+    // 'received'/'failed' is a redelivery of an event whose apply never
+    // finished — claim it again and reprocess, instead of swallowing it as a
+    // duplicate (the pre-007 handler inserted the row BEFORE applying, so a
+    // single apply failure poisoned the event forever). The claim and the
+    // attempts counter move together; only the 'applied' mark at the end
+    // suppresses future deliveries. (Two deliveries racing the same event can
+    // both claim; applyEvent only writes tenant state via setPlan, so a double
+    // apply of the same event converges to the same state.)
+    const claim = await this.db.control.query(
+      `INSERT INTO stripe_events (id, type, apply_status, attempts) VALUES ($1, $2, 'received', 1)
+       ON CONFLICT (id) DO UPDATE SET attempts = stripe_events.attempts + 1
+       WHERE stripe_events.apply_status <> 'applied'
+       RETURNING id`,
+      [event.id, event.type]);
+    if (!claim.rows.length) return { status: 200, body: { received: true, duplicate: true } };
 
-    const tenantId = await this.applyEvent(event);
-    if (tenantId) await this.db.control.query("UPDATE stripe_events SET tenant_id = $2 WHERE id = $1", [event.id, tenantId]);
+    let tenantId: string | null;
+    try {
+      tenantId = await this.applyEvent(event);
+    } catch (e) {
+      // Record the failure, then rethrow: the route answers 500 and Stripe
+      // retries with backoff. The row stays 'failed', so the retry reprocesses
+      // the event (claim above) instead of reporting it as a duplicate.
+      await this.db.control.query(
+        "UPDATE stripe_events SET apply_status = 'failed', apply_error = $2 WHERE id = $1",
+        [event.id, (e as Error).message.slice(0, 500)]).catch(() => { /* the original error is the one that matters */ });
+      throw e;
+    }
+    await this.db.control.query(
+      "UPDATE stripe_events SET apply_status = 'applied', applied_at = now(), apply_error = NULL, tenant_id = COALESCE($2, tenant_id) WHERE id = $1",
+      [event.id, tenantId]);
     return { status: 200, body: { received: true, type: event.type, applied: Boolean(tenantId) } };
   }
 
@@ -122,6 +156,22 @@ export class Billing {
         if (!t) return null;
         const plan = (s.metadata?.plan as PlanId) || "pro";
         if (plan !== "pro" && plan !== "team") return null;
+        // Payment gate: completing a session is not the same as being paid.
+        // An async or failing payment method can complete the session with
+        // payment_status "unpaid"; activating on metadata alone (the pre-B8
+        // behavior) would hand out a paid plan that was never paid for.
+        // "no_payment_required" is a genuinely settled session (trial or
+        // fully discounted checkout) and activates; the subscription events
+        // below carry the subscription's true status from then on. A missing
+        // payment_status proves nothing — Stripe has sent the field on every
+        // checkout.session.completed for years — so it is refused the same
+        // way. When an unpaid session is later paid, Stripe sends
+        // checkout.session.async_payment_succeeded plus subscription/invoice
+        // events; those set the plan then.
+        if (s.payment_status !== "paid" && s.payment_status !== "no_payment_required") {
+          console.error(`[billing] checkout.session.completed session=${s.id} tenant=${t.id} payment_status=${JSON.stringify(s.payment_status ?? null)} — NOT activating plan=${plan} (session completed without payment).`);
+          return null;
+        }
         const sub = typeof s.subscription === "string" ? s.subscription : s.subscription?.id;
         const cust = typeof s.customer === "string" ? s.customer : s.customer?.id;
         await this.setPlan(t.id, plan, "active", cust, sub);

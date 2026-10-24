@@ -1,9 +1,9 @@
 {
-  "name": "shared-memory-mcp",
+  "name": "helmian-scribe-workspace",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Sam's Shared Memory: MCP memory server + the Librarian (deterministic rules engine that files every memory).",
+  "description": "Helmian Scribe workspace: the MCP server plus the Librarian (deterministic rules engine that files every memory).",
   "scripts": {
     "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit",

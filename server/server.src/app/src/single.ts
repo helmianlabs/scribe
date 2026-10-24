@@ -25,6 +25,7 @@ import { PUBLIC_URL, MCP_PATH, PORT, AUTH_PASSPHRASE } from "./config.js";
 import { provider, adoptClient, approveAuthorization, denyAuthorization, getPending } from "./oauth-provider.js";
 import { renderConsentPage } from "./consent.js";
 import { buildMcpServer } from "./mcp-server.js";
+import { mailboxStatus } from "./db.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -39,7 +40,7 @@ const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(RESOURCE_URL);
 // ---------------------------------------------------------------------------
 app.get("/", (_req, res) => {
   res.status(200).json({
-    name: "claude-memory-mcp-server",
+    name: "helmian-scribe",
     status: "ok",
     mcp_endpoint: `${PUBLIC_URL}${MCP_PATH}`,
     transport: "streamable-http",
@@ -47,6 +48,42 @@ app.get("/", (_req, res) => {
   });
 });
 app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+
+// ---------------------------------------------------------------------------
+// Mailbox status feed (the Guard doorbell's data source). Deliberately
+// OUTSIDE the MCP/OAuth machinery: a single static bearer token from the
+// environment (MAILBOX_STATUS_TOKEN) gates it, so a browser extension can
+// poll it without an OAuth dance. Counts and subjects only — never bodies.
+// Feature is OFF (route 404s) unless the env var is set and non-empty.
+// Self-host surface only: SaaS mode does not register this route (per-tenant
+// mailbox scoping is a separate bite — see the B2 port report).
+// ---------------------------------------------------------------------------
+app.get("/mailbox-status", async (req, res) => {
+  const expected = process.env.MAILBOX_STATUS_TOKEN;
+  if (!expected) {
+    res.status(404).json({ error: "not found" });
+    return;
+  }
+  const header = req.header("authorization") ?? "";
+  const presented = header.startsWith("Bearer ")
+    ? header.slice("Bearer ".length)
+    : "";
+  if (!presented || !constantTimeEquals(presented, expected)) {
+    res.status(401).json({ error: "unauthorized" });
+    return;
+  }
+  try {
+    const entries = await mailboxStatus();
+    res.status(200).json({
+      generated_at: new Date().toISOString(),
+      mailboxes: entries
+        .filter((e) => e.count > 0)
+        .map((e) => ({ tag: e.tag, count: e.count, newest: e.newest })),
+    });
+  } catch {
+    res.status(500).json({ error: "mailbox status unavailable" });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // OAuth authorization server + protected-resource metadata + DCR.
@@ -65,13 +102,70 @@ app.use("/authorize", (req, _res, next) => {
   next();
 });
 
+// ---------------------------------------------------------------------------
+// Custom discovery documents (override the SDK router's defaults, which are
+// registered below; Express matches these first). Two strictness fixes for
+// validators like Google's Gemini app checker, which rejected the SDK's
+// documents while Claude and Mistral accepted them:
+//   1. issuer WITHOUT a trailing slash. The SDK emits new URL(origin).href,
+//      which always ends in "/"; strict RFC 8414 validators canonicalize the
+//      issuer without it. Both documents below use the same issuer string so
+//      discovery is consistent from every entry point.
+//   2. a jwks_uri. Access tokens here are opaque (validated against the
+//      server-side store), so the key set is empty; OIDC-bred validators
+//      require the field to exist.
+// ---------------------------------------------------------------------------
+const ISSUER_STR = PUBLIC_URL; // config.ts guarantees: no trailing slash
+const AS_METADATA = {
+  issuer: ISSUER_STR,
+  authorization_endpoint: PUBLIC_URL + "/authorize",
+  token_endpoint: PUBLIC_URL + "/token",
+  registration_endpoint: PUBLIC_URL + "/register",
+  revocation_endpoint: PUBLIC_URL + "/revoke",
+  jwks_uri: PUBLIC_URL + "/.well-known/jwks.json",
+  response_types_supported: ["code"],
+  grant_types_supported: ["authorization_code", "refresh_token"],
+  code_challenge_methods_supported: ["S256"],
+  token_endpoint_auth_methods_supported: ["client_secret_post", "none"],
+  revocation_endpoint_auth_methods_supported: ["client_secret_post"],
+  scopes_supported: ["memory.read", "memory.write"],
+  authorization_response_iss_parameter_supported: true,
+};
+app.get(["/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/"], (_req, res) => {
+  res.status(200).json(AS_METADATA);
+});
+app.get("/.well-known/openid-configuration", (_req, res) => {
+  res.status(200).json(AS_METADATA);
+});
+app.get("/.well-known/jwks.json", (_req, res) => {
+  res.status(200).json({ keys: [] });
+});
+const PR_METADATA = {
+  resource: RESOURCE_URL.toString(),
+  authorization_servers: [ISSUER_STR],
+  scopes_supported: ["memory.read", "memory.write"],
+  resource_name: "Helmian Scribe",
+  bearer_methods_supported: ["header"],
+};
+app.get(
+  [
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-protected-resource/mcp/",
+  ],
+  (_req, res) => {
+    res.status(200).json(PR_METADATA);
+  }
+);
+
 app.use(
   mcpAuthRouter({
     provider,
     issuerUrl: ISSUER,
     baseUrl: ISSUER,
     resourceServerUrl: RESOURCE_URL,
-    resourceName: "Claude Memory",
+    resourceName: "Helmian Scribe",
     scopesSupported: ["memory.read", "memory.write"],
   })
 );
@@ -166,6 +260,47 @@ app.post(MCP_PATH, bearer, express.json(), async (req, res) => {
   try {
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+    // Capability log: on an initialize request, this same server instance has
+    // now recorded the client's declared capabilities (the low-level Server
+    // stores them while handling initialize, before it replies). One line,
+    // structure only — no tokens, no user data. Logging must never break a
+    // connection, so it is fully guarded. (server.server.oninitialized is not
+    // used: in this stateless per-request setup the initialized notification
+    // arrives on a different instance that never saw the initialize.)
+    try {
+      const body = req.body as
+        | { method?: unknown }
+        | Array<{ method?: unknown }>
+        | undefined;
+      const isInitialize = Array.isArray(body)
+        ? body.some((m) => m?.method === "initialize")
+        : body?.method === "initialize";
+      if (isInitialize) {
+        const caps = server.server.getClientCapabilities();
+        const client = server.server.getClientVersion();
+        const rec = (caps ?? {}) as Record<string, unknown>;
+        const known = [
+          "sampling",
+          "elicitation",
+          "roots",
+          "logging",
+          "prompts",
+          "resources",
+          "tools",
+        ];
+        const presence = known
+          .map((k) => `${k}=${rec[k] !== undefined}`)
+          .join(" ");
+        const experimental = caps?.experimental
+          ? Object.keys(caps.experimental).join(",")
+          : "";
+        console.log(
+          `[mcp] initialize client=${client?.name ?? "unknown"} version=${client?.version ?? "unknown"} capabilities: ${presence} experimental=[${experimental}]`
+        );
+      }
+    } catch {
+      /* logging only — swallow */
+    }
   } catch (err) {
     if (!res.headersSent) {
       res.status(500).json({
@@ -185,12 +320,15 @@ app.get(MCP_PATH, bearer, (_req, res) => {
     id: null,
   });
 });
+app.head(MCP_PATH, (_req, res) => {
+  res.set("Allow", "POST").status(405).end();
+});
 app.delete(MCP_PATH, bearer, (_req, res) => res.status(405).end());
 
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.error(
-    `claude-memory-mcp-server listening on :${PORT}\n` +
+    `helmian-scribe (self-host) listening on :${PORT}\n` +
       `  public:   ${PUBLIC_URL}\n` +
       `  mcp:      ${PUBLIC_URL}${MCP_PATH}\n` +
       `  as-meta:  ${PUBLIC_URL}/.well-known/oauth-authorization-server\n` +

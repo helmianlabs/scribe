@@ -1,11 +1,15 @@
-# Hosted (SaaS) mode — phase 1
+# Helmian Scribe — hosted (SaaS) mode, phase 1
 
-Branch `saas`. One server binary, two modes, chosen by `MEMORY_MODE`:
+Helmian Scribe is one memory every AI you use (Claude, ChatGPT, Grok, Gemini, coding tools) can read and write. Inside it, the sorter is **the Librarian** and AI-to-AI messaging is **Helmian Courier** (the Courier).
+
+Branch `saas`. One server binary, two modes, chosen by `SCRIBE_MODE` (the older `MEMORY_MODE` still works):
 
 | Mode | What it is | Consent | Data |
 |---|---|---|---|
 | `single` (default) | Sam's self-host server, unchanged behavior | shared passphrase | one archive (`tenant_id` = `self` where it exists) |
 | `saas` | hosted, many customers | the signed-in account (email magic link) | one tenant per account, isolated by row-level security |
+
+Notebook names inside a memory keep the `Shared Memory — <category>` prefix on purpose: Sam's existing archive and the Librarian's notebook rules match on it. Renaming it would be a data migration, not a label change.
 
 Nothing on this branch has been deployed or run against Sam's production database.
 
@@ -38,8 +42,8 @@ Nothing on this branch has been deployed or run against Sam's production databas
 Calls are metered per tenant per UTC day in `usage_daily`. Hitting a limit returns a plain-language tool error (MCP) or HTTP 402 (API). `PLAN_LIMITS_JSON` overrides limits per environment. Prices are Sam's call; the Stripe Price is the source of truth for money, `plans.ts` for limits.
 
 **Export and delete**
-- `GET /api/export` → one JSON file with every row of the tenant (memories, notebooks, filings, rules, flags, post office, usage).
-- `POST /api/delete-all {"confirm":"DELETE"}` (owner only) → deletes memories, filings, moves, custom rules, flags and post office messages. Keeps the account, billing, chosen rulebook and usage meter. Add `"revoke_connections": true` to also revoke every OAuth token.
+- `GET /api/export` → one JSON file with every row of the tenant (memories, notebooks, filings, rules, flags, Courier messages, usage).
+- `POST /api/delete-all {"confirm":"DELETE"}` (owner only) → deletes memories, filings, moves, custom rules, flags and Courier messages. Keeps the account, billing, chosen rulebook and usage meter. Add `"revoke_connections": true` to also revoke every OAuth token.
 
 **Stripe (test mode only)** (`saas/billing.ts`)
 - `POST /api/billing/checkout {"plan":"pro"|"team"}` → Checkout Session (subscription) with `tenant_id` in `client_reference_id` and metadata; creates the Stripe customer on first use.
@@ -48,7 +52,9 @@ Calls are metered per tenant per UTC day in `usage_daily`. Hitting a limit retur
 - Safety: a live key (`sk_live_`/`rk_live_`) is refused at startup, and live-mode events are refused, unless `STRIPE_ALLOW_LIVE=yes-i-mean-live`. With no key at all, checkout/portal return a clearly-labelled mock page.
 - `scripts/stripe-create-products.mjs`: dry run by default; `--apply` with a test key creates/reuses the Pro and Team products + monthly prices (by `lookup_key`) and prints the `STRIPE_PRICE_*` lines. Not run against any account.
 
-**Flags** — see [FLAGS_API.md](FLAGS_API.md). **Post office** — see [POST_OFFICE.md](POST_OFFICE.md).
+**Flags** — see [FLAGS_API.md](FLAGS_API.md). **Helmian Courier** — see [COURIER.md](COURIER.md).
+
+**Mailbox status (the doorbell feed)** — `GET /mailbox-status` returns `{ generated_at, mailboxes }` for the caller's tenant only. A mailbox is a Courier recipient agent; `count` is that agent's unread mail (direct mail plus broadcasts from other agents), and `newest` carries the newest waiting message's id, sender, time and actual Courier subject. Auth is a bearer credential whose tenant the server verifies — an MCP OAuth access token with `memory.read`, or a service API key created with the `mailbox.read` scope. There is no shared status token and no tenant parameter in SaaS mode.
 
 **Dashboard** (`/dashboard`): MCP address, plan + usage, upgrade / manage billing, recent flags, alert settings, API keys, export, delete-all. Plain server-rendered page + one static script (CSP `script-src 'self'`).
 
@@ -58,19 +64,20 @@ Calls are metered per tenant per UTC day in `usage_daily`. Hitting a limit retur
 |---|---|---|
 | `004_flags.sql` | both modes | `flags` table; self-host roles get SELECT+INSERT only |
 | `005_saas.sql` | **SaaS database only** | control tables, `tenant_id` on every data table (existing rows → `self`), RLS, rebuilt views, grants for `memory_app`. Do not apply to Sam's `claude_memory`: with FORCE RLS the self-host server would see an empty archive. |
-| `006_post_office.sql` | both modes | post office tables; adds RLS when `tenants` exists |
+| `006_courier.sql` | both modes | Helmian Courier tables; adds RLS when `tenants` exists |
+| `007_stripe_events_status.sql` | **SaaS database only** | `stripe_events` apply tracking (`apply_status`/`apply_error`/`applied_at`/`attempts`) so a webhook whose apply fails stays retryable instead of being swallowed as a duplicate |
 
-Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006.
+Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007.
 
 Moving Sam's archive into the hosted service later = export from `claude_memory`, import as tenant `self` (or a new tenant). Not built yet.
 
 ## Running it
 
 ```bash
-cd server.src/app && npm install && npm test          # 36 tests: scanner, alerts, OAuth, RLS, billing, limits, post office, migrations
+cd server.src/app && npm install && npm test          # 36 tests: scanner, alerts, OAuth, RLS, billing, limits, Courier, migrations
 # staging: throwaway Postgres + the app + a webhook receiver
 docker compose -f staging/docker-compose.yml up -d --build
-node staging/smoke.mjs                                # sign up → connect → save → search → flag + webhook → post office → checkout → webhook → export → delete → RLS
+node staging/smoke.mjs                                # sign up → connect → save → search → flag + webhook → Courier → checkout → webhook → export → delete → RLS
 docker compose -f staging/docker-compose.yml down -v
 ```
 On machines without Docker bridge networking add `-f staging/docker-compose.hostnet.yml` and run the smoke with `HOSTNET=1`. To exercise real Stripe test checkout, export `STRIPE_TEST_SECRET_KEY`, `STRIPE_TEST_PRICE_PRO`, `STRIPE_TEST_PRICE_TEAM` before `up`.
@@ -79,7 +86,7 @@ On machines without Docker bridge networking add `-f staging/docker-compose.host
 
 | Var | Required | Meaning |
 |---|---|---|
-| `MEMORY_MODE=saas` | yes | selects this mode |
+| `SCRIBE_MODE=saas` (or `MEMORY_MODE=saas`) | yes | selects this mode |
 | `DATABASE_URL` | yes | connection as `memory_app` (not the owner) |
 | `PUBLIC_URL` | yes | https origin; issuer + resource URLs derive from it |
 | `DATABASE_SSL=disable` | local only | default is SSL on |
@@ -91,7 +98,7 @@ On machines without Docker bridge networking add `-f staging/docker-compose.host
 
 ## What remains (not in phase 1)
 
-- **Needs Sam:** product name + domain; a verified Resend sending domain (`MAIL_FROM`); a Stripe **test** secret key and webhook secret (then run the products script); final prices; a new Neon project/branch for the hosted database and the `memory_app` password; whether/when to move his archive in.
+- **Needs Sam:** a domain for Helmian Scribe; a verified Resend sending domain (`MAIL_FROM`); a Stripe **test** secret key and webhook secret (then run the products script); final prices; a new Neon project/branch for the hosted database (provisioning and the `memory_app` password are mechanized — docs/PROVISIONING.md; the deployment unit and boot validation are docs/HOSTING.md); whether/when to move his archive in.
 - **Guard extension wiring** (owned by the Guard bot): extension → `POST /api/flags` with a tenant API key, poll `GET /api/flags` or receive the alert webhook. The contract is in FLAGS_API.md.
 - **Executive Guard signed approvals** (owned by the Guard bot): not built here.
 - Team invites (members beyond the owner), tenant switcher UI, account deletion (vs. delete-all), importers (Claude/ChatGPT/Grok history), Librarian preset picker in the dashboard (API exists: `POST /api/librarian/preset`), per-tenant backups, Postgres full-text search for large tenants, rate limiting shared across replicas (current limiter is per process), alert delivery outside the request transaction + retries, admin console, ToS/privacy pages, Stripe Tax decision (or Lemon Squeezy/Paddle as merchant of record, per the product spec).

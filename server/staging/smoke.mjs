@@ -1,5 +1,5 @@
-// End-to-end smoke test against the local staging stack (docker-compose.yml).
-// Sign up -> connect (OAuth) -> save -> search -> flag fires (+ alert webhook) -> post office
+// Helmian Scribe end-to-end smoke test against the local staging stack (docker-compose.yml).
+// Sign up -> connect (OAuth) -> save -> search -> flag fires (+ alert webhook) -> Helmian Courier
 // -> checkout (test mode if STRIPE_TEST_SECRET_KEY was given to compose, else mock)
 // -> signed Stripe webhook sets the plan -> export -> delete-all -> RLS check.
 import { createHash, createHmac, randomBytes } from "node:crypto";
@@ -70,7 +70,7 @@ const hook = hooks.at(-1);
 const [t, v1] = (hook?.sig || "").split(",").map((p) => p.split("=")[1]);
 check(hook && createHmac("sha256", "staging-hook-secret").update(`${t}.${hook.body}`).digest("hex") === v1 && !hook.body.includes(fake), "webhook received, signature verifies, payload redacted");
 
-console.log("4. post office");
+console.log("4. Helmian Courier");
 const sm = await call("send_message", { to: "muse", from: "paul", subject: "smoke", body: "hello from staging" });
 check(sm.d.sent, "send_message");
 const inbox = await call("check_inbox", { agent_name: "muse" });
@@ -98,5 +98,5 @@ const psql = (sql) => execFileSync("sudo", ["docker", "compose", ...COMPOSE, "ex
 check(psql("SELECT count(*) FROM messages") === "0", "no tenant set => app role sees 0 rows (seed row belongs to 'self')");
 check(psql("BEGIN; SELECT set_config('app.tenant_id','self',true); SELECT count(*) FROM messages; COMMIT;").split("\n").includes("1"), "tenant 'self' sees exactly its own row");
 
-console.log(failed ? `\n${failed} FAILED` : "\nALL SMOKE CHECKS PASSED");
+console.log(failed ? `\n${failed} FAILED` : "\nALL HELMIAN SCRIBE SMOKE CHECKS PASSED");
 process.exit(failed ? 1 : 0);

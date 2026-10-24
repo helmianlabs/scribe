@@ -1,4 +1,4 @@
-# Flags API
+# Helmian Scribe — Flags API
 
 For services that report or read flags (Helmian Guard extension, other bots). Flags are
 problems worth a human's attention: a secret or personal number in a chat, harmful code an
@@ -26,7 +26,7 @@ Callers may also report categories `privacy` and `other`.
 
 ## Authentication
 
-- **Service API key** (for Guard and other services): the tenant owner creates one on the dashboard or with `POST /api/keys {"name":"Guard extension","scopes":["flags.write","flags.read"]}` (signed-in session). The key (`smk_…`) is shown once and stored only as a SHA-256 hash. Send `Authorization: Bearer smk_…`. Keys work **only** on the `/api/flags*` endpoints. Revoke: `DELETE /api/keys/<id>`.
+- **Service API key** (for Guard and other services): the tenant owner creates one on the dashboard or with `POST /api/keys {"name":"Guard extension","scopes":["flags.write","flags.read"]}` (signed-in session). The key (`smk_…`) is shown once and stored only as a SHA-256 hash. Send `Authorization: Bearer smk_…`. Keys work **only** on the `/api/flags*` endpoints, plus `GET /mailbox-status` when created with the separate `mailbox.read` scope. Revoke: `DELETE /api/keys/<id>`.
 - **Signed-in session** (dashboard): cookie + `X-Requested-With` header + same origin.
 - **MCP** (connected AIs): tools `report_flag` (needs `memory.write`) and `list_flags`.
 
@@ -91,7 +91,7 @@ Verify: recompute the HMAC over `"<t>.<raw body>"`, compare in constant time, re
 
 ## Self-host mode
 
-`report_flag` / `list_flags` and save-time redaction work in `MEMORY_MODE=single` too (tenant `self`, needs `004_flags.sql`). Alerts there go to `ALERT_EMAIL_TO` / `ALERT_WEBHOOK_URL`. The REST endpoints are SaaS-mode only for now.
+`report_flag` / `list_flags` and save-time redaction work in self-host mode (`SCRIBE_MODE=single`, the default) too (tenant `self`, needs `004_flags.sql`). Alerts there go to `ALERT_EMAIL_TO` / `ALERT_WEBHOOK_URL`. The REST endpoints are SaaS-mode only for now.
 
 ## Guard integration checklist (for the Guard bot)
 1. Owner creates an API key named for the extension; the extension stores it in `chrome.storage.local`.

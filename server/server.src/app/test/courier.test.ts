@@ -1,7 +1,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { freshDb, startSaas, signIn, api, connect, tool, type Saas } from "./helpers.ts";
-import { sendMessage, checkInbox, markRead, listAgents, agentName, resolveSender } from "../src/postoffice/store.ts";
+import { sendMessage, checkInbox, markRead, listAgents, agentName, resolveSender } from "../src/courier/store.ts";
 
 test("names normalize; identity falls back to the OAuth client name", () => {
   assert.equal(agentName("Claude AI"), "claude-ai");

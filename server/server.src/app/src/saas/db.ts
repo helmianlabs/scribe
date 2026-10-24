@@ -23,7 +23,7 @@ export function pgDb(connectionString: string, ssl: boolean): Db {
     connectionString,
     max: Number(process.env.DATABASE_POOL_MAX || 10),
     ssl: ssl ? { rejectUnauthorized: false } : undefined,
-    application_name: "shared-memory-saas",
+    application_name: "helmian-scribe",
   });
   return {
     control: { query: (sql, params) => pool.query(sql, params as unknown[]) },

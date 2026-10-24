@@ -62,7 +62,7 @@ test("OAuth consent uses the signed-in account; token works on that tenant only"
   assert.doesNotMatch(aliceTok.consentPage, /passphrase/i);
   const list = await mcp(aliceMe.mcp_url, aliceTok.access_token, "tools/list");
   const names = list.body.result.tools.map((t: any) => t.name).sort();
-  assert.deepEqual(names, ["add_rule", "check_inbox", "explain_filing", "list_agents", "list_flags", "list_unsorted", "mark_read", "move_memory", "report_flag", "save_memory", "search_memory", "send_message"]);
+  assert.deepEqual(names, ["add_rule", "check_inbox", "explain_filing", "list_agents", "list_flags", "list_unsorted", "mark_read", "move_memory", "read_memory", "report_flag", "save_memory", "search_memory", "send_message"]);
   assert.ok(list.body.result.tools.every((t: any) => /check_inbox/.test(t.description)), "every tool tells AIs to check the inbox");
   // Alice's token on Bob's URL is refused.
   const cross = await mcp(bobMe.mcp_url, aliceTok.access_token, "tools/list");
@@ -168,7 +168,7 @@ test("checkout without a Stripe key is a clearly-marked mock", async () => {
 
 test("Stripe webhook: bad signature refused; signed checkout.session.completed sets the plan; replay is idempotent", async () => {
   const secret = s.cfg.stripe.webhookSecret!;
-  const event = { id: "evt_test_1", object: "event", type: "checkout.session.completed", livemode: false, data: { object: { id: "cs_test_1", object: "checkout.session", client_reference_id: aliceMe.tenant.id, customer: "cus_test_1", subscription: "sub_test_1", metadata: { tenant_id: aliceMe.tenant.id, plan: "pro" } } } };
+  const event = { id: "evt_test_1", object: "event", type: "checkout.session.completed", livemode: false, data: { object: { id: "cs_test_1", object: "checkout.session", client_reference_id: aliceMe.tenant.id, customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { tenant_id: aliceMe.tenant.id, plan: "pro" } } } };
   const payload = JSON.stringify(event);
   const bad = await fetch(`${s.base}/webhooks/stripe`, { method: "POST", headers: { "Content-Type": "application/json", "Stripe-Signature": "t=1,v1=deadbeef" }, body: payload });
   assert.equal(bad.status, 400);
@@ -197,7 +197,7 @@ test("live Stripe keys are refused", async () => {
 test("export-all returns every table for the tenant only; delete-all empties it", async () => {
   const ex = await api(s, alice)("/api/export");
   assert.equal(ex.status, 200);
-  assert.equal(ex.body.format, "shared-memory-export");
+  assert.equal(ex.body.format, "helmian-scribe-export");
   assert.ok(ex.body.tables.messages.length >= 1);
   assert.ok(ex.body.tables.messages.every((m: any) => m.tenant_id === aliceMe.tenant.id));
   const no = await api(s, alice)("/api/delete-all", { method: "POST", body: JSON.stringify({}) });

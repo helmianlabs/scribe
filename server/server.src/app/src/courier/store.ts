@@ -1,5 +1,5 @@
 /**
- * Post office: connected AIs leave each other messages through the memory server.
+ * Helmian Courier (the Courier): connected AIs leave each other messages through the memory server.
  * Tenant scoped, append-only, and kept apart from memories (no Librarian, not searchable
  * with search_memory). Bodies are redacted by the Flags scanner before storage.
  */
@@ -109,6 +109,89 @@ export async function markRead(q: Q, tenantId: string, p: { message_ids: number[
      WHERE m.tenant_id = $1 AND m.id = ANY($3::bigint[]) AND (m.to_agent = $2 OR m.to_agent = 'all')
      ON CONFLICT DO NOTHING RETURNING message_id`, [tenantId, me, ids]);
   return { agent: me, marked: r.rows.length, message_ids: r.rows.map((x) => Number(x.message_id)) };
+}
+
+export interface CourierMailboxStatusEntry {
+  /** Doorbell-compatible mailbox key: `for-${agent}`. */
+  tag: string;
+  agent: string;
+  count: number;
+  newest: {
+    id: number;
+    sender: string;
+    created_at: string;
+    subject: string;
+  } | null;
+}
+
+/**
+ * Tenant-scoped Courier status for the doorbell feed.
+ *
+ * A mailbox is one recipient agent in this tenant. "Waiting" is precise in
+ * Courier: a message addressed to that agent — or a broadcast from another
+ * agent — for which that agent has no row in agent_message_reads. The newest
+ * field summarizes the newest waiting message, using its actual Courier
+ * subject. Unlike the self-host memory-tag feed, there is no 14-day window:
+ * explicit per-agent read state, not recency, defines whether mail waits.
+ * Only mailboxes with waiting mail are returned.
+ */
+export async function courierMailboxStatus(q: Q, tenantId: string): Promise<CourierMailboxStatusEntry[]> {
+  const r = await q.query(
+    `WITH agents AS (
+       SELECT DISTINCT name
+       FROM agent_directory
+       WHERE tenant_id = $1 AND name <> $2
+     ),
+     unread AS (
+       SELECT recipient.name AS mailbox_agent,
+              m.id,
+              m.from_agent,
+              m.created_at,
+              m.subject
+       FROM agents recipient
+       JOIN agent_messages m
+         ON m.tenant_id = $1
+        AND (m.to_agent = recipient.name
+             OR (m.to_agent = $2 AND m.from_agent <> recipient.name))
+       WHERE NOT EXISTS (
+         SELECT 1
+         FROM agent_message_reads rd
+         WHERE rd.tenant_id = m.tenant_id
+           AND rd.message_id = m.id
+           AND rd.agent = recipient.name
+       )
+     ),
+     counts AS (
+       SELECT mailbox_agent, count(*)::int AS count
+       FROM unread
+       GROUP BY mailbox_agent
+     ),
+     newest AS (
+       SELECT DISTINCT ON (mailbox_agent)
+              mailbox_agent, id, from_agent, created_at, subject
+       FROM unread
+       ORDER BY mailbox_agent, created_at DESC, id DESC
+     )
+     SELECT counts.mailbox_agent AS agent,
+            counts.count,
+            newest.id,
+            newest.from_agent,
+            newest.created_at,
+            newest.subject
+     FROM counts
+     JOIN newest ON newest.mailbox_agent = counts.mailbox_agent
+     ORDER BY counts.mailbox_agent ASC`, [tenantId, BROADCAST]);
+  return r.rows.map((x) => ({
+    tag: `for-${x.agent}`,
+    agent: String(x.agent),
+    count: Number(x.count),
+    newest: {
+      id: Number(x.id),
+      sender: String(x.from_agent),
+      created_at: iso(x.created_at),
+      subject: String(x.subject),
+    },
+  }));
 }
 
 export async function listAgents(q: Q, tenantId: string, extra: Array<{ name: string; client_id?: string; client_name?: string | null }> = []) {

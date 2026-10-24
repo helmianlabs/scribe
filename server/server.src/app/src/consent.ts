@@ -26,10 +26,10 @@ export function renderConsentPage(opts: {
   const { pendingId, clientName, error } = opts;
   const wantsWrite = (opts.scopes ?? []).includes("memory.write");
   const sub = wantsWrite
-    ? "An application is requesting access to your shared memory: it may search your archived conversations and save new memories that your other AIs can read. Enter your passphrase to approve."
-    : "An application is requesting read-only access to your Claude conversation history. Enter your passphrase to approve.";
+    ? "An application is requesting access to your Helmian Scribe memory: it may search your archived conversations and save new memories that your other AIs can read. Enter your passphrase to approve."
+    : "An application is requesting read-only access to your Helmian Scribe memory (your archived AI conversations). Enter your passphrase to approve.";
   const foot = wantsWrite
-    ? "This grant lets the app search your archived conversations and save new memories into the shared memory. It can be revoked at any time by disconnecting the connector."
+    ? "This grant lets the app search your archived conversations and save new memories into Helmian Scribe. It can be revoked at any time by disconnecting the connector."
     : "This grant lets the app search your archived conversations. It is read-only and can be revoked at any time by disconnecting the connector in Claude.ai.";
   const errorBlock = error
     ? `<p class="error">${escapeHtml(error)}</p>`
@@ -39,7 +39,7 @@ export function renderConsentPage(opts: {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Authorize Memory Connector</title>
+<title>Authorize Helmian Scribe</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0d10; color:#e9eef3;
@@ -62,7 +62,7 @@ export function renderConsentPage(opts: {
 </head>
 <body>
   <div class="card">
-    <h1>Authorize memory access</h1>
+    <h1>Authorize Helmian Scribe access</h1>
     <p class="sub">${sub}</p>
     <div class="client">Requesting app: <strong>${escapeHtml(clientName)}</strong></div>
     ${errorBlock}

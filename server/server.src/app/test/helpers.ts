@@ -25,7 +25,8 @@ export async function freshDb(opts: { saas?: boolean } = {}) {
   await pg.exec(sql("001_librarian.sql"));
   await pg.exec(sql("004_flags.sql"));
   if (opts.saas !== false) await pg.exec(sql("005_saas.sql"));
-  await pg.exec(sql("006_post_office.sql"));
+  await pg.exec(sql("006_courier.sql"));
+  if (opts.saas !== false) await pg.exec(sql("007_stripe_events_status.sql"));
   return pg;
 }
 
@@ -83,7 +84,7 @@ export async function connect(s: Saas, cookie: string, mcpUrl: string, opts: { s
   const tok = await fetch(`${s.base}/token`, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "authorization_code", code: back.searchParams.get("code")!, code_verifier: verifier, client_id: reg.client_id, redirect_uri: redirect, resource: mcpUrl }) });
   const body = await tok.json();
   if (tok.status !== 200) throw new Error(`token ${tok.status} ${JSON.stringify(body)}`);
-  return { ...body, client_id: reg.client_id, consentPage: page };
+  return { ...body, client_id: reg.client_id, consentPage: page, redirectUrl: back.toString() };
 }
 
 let rpcId = 1;

@@ -18,8 +18,8 @@ export function signInPage(opts: { returnTo?: string | null; error?: string; sen
   if (opts.sent) {
     return layout("Check your email", `<div class="card"><h1>Check your email</h1><p class="sub">We sent a sign-in link to <b>${esc(opts.sent)}</b>. It works once and expires soon. You can close this tab after you click it.</p></div>`);
   }
-  return layout("Sign in", `<div class="card"><h1>Sign in to your shared memory</h1>
-<p class="sub">One memory every AI you use can read and write. Enter your email and we'll send you a sign-in link. New here? The same link creates your account.</p>
+  return layout("Sign in", `<div class="card"><h1>Sign in to Helmian Scribe</h1>
+<p class="sub">One memory every AI you use (Claude, ChatGPT, Grok, Gemini, your coding tools) can read and write. Enter your email and we'll send you a sign-in link. New here? The same link creates your account.</p>
 ${opts.error ? `<p class="err">${esc(opts.error)}</p>` : ""}
 <form method="POST" action="/auth/start"><input type="hidden" name="return_to" value="${esc(opts.returnTo ?? "")}">
 <label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required autofocus>
@@ -40,8 +40,8 @@ export function consentPage(o: { pendingId: string; clientName: string; email: s
   const choose = o.fixedTenant
     ? `<input type="hidden" name="tenant_id" value="${esc(o.fixedTenant.id)}"><p>Memory: <b>${esc(o.fixedTenant.name)}</b></p>`
     : `<label for="tenant_id">Which memory?</label><select id="tenant_id" name="tenant_id">${o.tenants.map((t) => `<option value="${esc(t.id)}">${esc(t.name)}</option>`).join("")}</select>`;
-  return layout("Authorize memory access", `<div class="card"><h1>Authorize memory access</h1>
-<p class="sub"><b>${esc(o.clientName)}</b> wants to ${write ? "search your shared memory and save new memories to it" : "search your shared memory (read only)"}.</p>
+  return layout("Authorize Helmian Scribe", `<div class="card"><h1>Authorize Helmian Scribe access</h1>
+<p class="sub"><b>${esc(o.clientName)}</b> wants to ${write ? "search your Helmian Scribe memory and save new memories to it" : "search your Helmian Scribe memory (read only)"}.</p>
 <p class="muted">Signed in as ${esc(o.email)}. <a href="/logout" style="color:#93c5fd">Not you?</a></p>
 ${o.error ? `<p class="err">${esc(o.error)}</p>` : ""}
 <form method="POST" action="/consent"><input type="hidden" name="pending_id" value="${esc(o.pendingId)}">${choose}
@@ -50,11 +50,26 @@ ${o.error ? `<p class="err">${esc(o.error)}</p>` : ""}
 }
 
 export function dashboardPage(): string {
-  return layout("Your shared memory", `<div id="app"><div class="card"><h1>Your shared memory</h1><p class="sub">Loading…</p></div></div>`, ["/static/dashboard.js"]);
+  return layout("Helmian Scribe", `<div id="app"><div class="card"><h1>Helmian Scribe</h1><p class="sub">Loading…</p></div></div>`, ["/static/dashboard.js"]);
+}
+
+export function gettingStartedPage(): string {
+  return layout("Getting started — Helmian Scribe", `<div class="card"><h1>Getting started</h1>
+<p class="sub">Three short steps and your AIs share one memory — including the conversations you have already had. The full guide lives in the docs (GETTING-STARTED.md); this page is the short version.</p>
+<h2>1 · Your memory address</h2>
+<p>Your <a href="/dashboard" style="color:#93c5fd">dashboard</a> shows your memory address. That is the only thing you ever copy.</p>
+<h2>2 · Connect your AI</h2>
+<p>In Claude, ChatGPT, Grok or Gemini, add a custom connector and paste your memory address. The app sends you back here to approve — that approval is the whole setup. Then ask your AI: <i>"Search my memory for…"</i></p>
+<h2>3 · Bring your old conversations</h2>
+<p><b>Claude:</b> open Settings → Privacy → <b>Export data</b>. Claude emails you a download link — download the .zip, don't open it.</p>
+<p><b>ChatGPT:</b> open Settings → Data controls → <b>Export data</b> → Export. ChatGPT emails you a download link — download the .zip, don't open it.</p>
+<p><b>Gemini:</b> Google Takeout exports are not importable yet — we're honest about that rather than guess at your history. Your Gemini chats stay in Gemini for now.</p>
+<p>Then come back here, go to your <a href="/dashboard" style="color:#93c5fd">dashboard</a>, pick the .zip under <b>Bring your old chats with you</b> and press <b>Import history</b>. Your old conversations land in your memory, titled and dated, searchable by every AI you connect. Uploading the same file twice is safe — nothing is duplicated. Secrets are scrubbed before anything is stored, exactly like every other save.</p>
+<p class="muted">Limits: one export file up to 50 MB and 2,000 conversations at a time. If your plan's storage fills up mid-import, the import stops safely — upgrade and upload the same file again to continue.</p></div>`);
 }
 
 export function mockBillingPage(): string {
-  return layout("Billing (test stub)", `<div class="card"><h1>Billing is not connected yet</h1><p class="sub">This server has no Stripe key, so checkout is a stub. Nothing was charged. Set STRIPE_SECRET_KEY (a test key, sk_test_…) to use Stripe test-mode checkout.</p><p><a href="/dashboard" style="color:#93c5fd">Back to dashboard</a></p></div>`);
+  return layout("Helmian Scribe billing (test stub)", `<div class="card"><h1>Billing is not connected yet</h1><p class="sub">This server has no Stripe key, so checkout is a stub. Nothing was charged. Set STRIPE_SECRET_KEY (a test key, sk_test_…) to use Stripe test-mode checkout.</p><p><a href="/dashboard" style="color:#93c5fd">Back to dashboard</a></p></div>`);
 }
 
 export const DASHBOARD_JS = `(() => {
@@ -78,12 +93,14 @@ async function load() {
   app.append($('<div class="card"><h2>Flags</h2>' + (flags.length ? '<table><tr><th>When</th><th>Severity</th><th>What</th><th>From</th></tr>' + flags.map((f) => '<tr><td>' + esc(new Date(f.created_at).toLocaleString()) + '</td><td class="sev-' + esc(f.severity) + '">' + esc(f.severity) + '</td><td>' + esc(f.reason) + (f.excerpt ? '<br><span class="mono">' + esc(f.excerpt.slice(0, 160)) + '</span>' : '') + '</td><td>' + esc(f.source_ai || '') + '</td></tr>').join('') + '</table>' : '<p class="muted">No flags yet. Secrets and personal numbers are redacted before anything is stored.</p>') +
     '<h2 style="margin-top:16px">Alerts</h2><label>Email</label><input id="ae" value="' + esc(t.alert_email || '') + '"><label>Webhook (https)</label><input id="aw" value="' + esc(t.alert_webhook_url || '') + '"><label>Alert at</label><select id="as">' + ['low','medium','high','critical'].map((s) => '<option' + (s === t.alert_min_severity ? ' selected' : '') + '>' + s + '</option>').join('') + '</select><button id="savealerts">Save alerts</button></div>'));
   app.append($('<div class="card"><h2>API keys (for Helmian Guard and other services)</h2>' + (keys.length ? '<table>' + keys.map((k) => '<tr><td>' + esc(k.name) + '</td><td class="mono">' + esc(k.prefix) + '…</td><td>' + (k.revoked_at ? 'revoked' : '<button class="ghost" data-revoke="' + esc(k.id) + '">Revoke</button>') + '</td></tr>').join('') + '</table>' : '<p class="muted">None yet.</p>') + '<input id="kn" placeholder="Key name, e.g. Guard extension"><button id="newkey">Create key</button><p id="keyout"></p></div>'));
+  app.append($('<div class="card"><h2>Bring your old chats with you</h2><p>Export your history from Claude or ChatGPT and upload the .zip here — your old conversations land in this memory, titled and dated, searchable by every AI you connect. Uploading the same file twice is safe: nothing is duplicated.</p><p><a href="/getting-started" style="color:#93c5fd">Step-by-step guide: how to export from Claude or ChatGPT</a></p><input type="file" id="impfile" accept=".zip"><button id="impgo">Import history</button><p id="impout"></p></div>'));
   app.append($('<div class="card"><h2>Your data</h2><button class="ghost" id="export">Export everything (JSON)</button><button class="danger" id="delall">Delete all memories</button><p class="muted">Delete removes every memory, filing and flag. Your account and billing stay.</p></div>'));
   app.querySelectorAll('[data-plan]').forEach((b) => b.onclick = async () => { try { const r = await api('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ plan: b.dataset.plan }) }); location.href = r.url; } catch (e) { alert(e.message); } });
   document.getElementById('portal').onclick = async () => { try { location.href = (await api('/api/billing/portal', { method: 'POST' })).url; } catch (e) { alert(e.message); } };
   document.getElementById('savealerts').onclick = async () => { try { await api('/api/alerts', { method: 'POST', body: JSON.stringify({ alert_email: document.getElementById('ae').value || null, alert_webhook_url: document.getElementById('aw').value || null, alert_min_severity: document.getElementById('as').value }) }); load(); } catch (e) { alert(e.message); } };
   document.getElementById('newkey').onclick = async () => { try { const r = await api('/api/keys', { method: 'POST', body: JSON.stringify({ name: document.getElementById('kn').value }) }); document.getElementById('keyout').innerHTML = 'Copy it now, it will not be shown again:<br><code>' + esc(r.key) + '</code>'; } catch (e) { alert(e.message); } };
   app.querySelectorAll('[data-revoke]').forEach((b) => b.onclick = async () => { await api('/api/keys/' + encodeURIComponent(b.dataset.revoke), { method: 'DELETE' }); load(); });
+  document.getElementById('impgo').onclick = async () => { const f = document.getElementById('impfile').files[0]; const out = document.getElementById('impout'); if (!f) { out.textContent = 'Pick the .zip file from your export email first.'; return; } out.textContent = 'Importing… a big history can take a minute. Keep this tab open.'; try { const r = await fetch('/api/import', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/zip', 'X-Requested-With': 'dashboard' }, body: f }); const b = await r.json().catch(() => ({})); if (!r.ok) throw new Error(b.error || ('HTTP ' + r.status)); out.textContent = 'Done: ' + b.imported + ' conversations imported, ' + b.skipped_duplicates + ' already here, ' + b.failed.length + ' could not be imported.' + (b.failed.length ? ' First problem: ' + b.failed[0].title + ' — ' + b.failed[0].error : '') + (b.note ? ' ' + b.note : ''); load(); } catch (e) { out.textContent = 'Import failed: ' + e.message; } };
   document.getElementById('export').onclick = () => { location.href = '/api/export'; };
   document.getElementById('delall').onclick = async () => { const c = prompt('Type DELETE to remove every memory in this account.'); if (c !== 'DELETE') return; try { const r = await api('/api/delete-all', { method: 'POST', body: JSON.stringify({ confirm: 'DELETE' }) }); alert('Deleted.'); load(); } catch (e) { alert(e.message); } };
 }

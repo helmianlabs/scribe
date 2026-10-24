@@ -1,5 +1,5 @@
 /**
- * Registers the post office tools on an MCP server. The caller supplies `run`, which gives
+ * Registers the Helmian Courier tools (AI-to-AI messages) on an MCP server. The caller supplies `run`, which gives
  * a tenant-scoped query function (and does metering in SaaS mode), plus the caller identity.
  */
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -7,10 +7,10 @@ import { z } from "zod";
 import type { Q } from "../flags/store.js";
 import { sendMessage, checkInbox, markRead, listAgents, PRIORITIES, type Identity, type Priority } from "./store.js";
 
-export const INBOX_HINT = " Post office: at the start of every session, call check_inbox with your agent name to read messages other AIs left for you.";
+export const INBOX_HINT = " Helmian Courier: at the start of every session, call check_inbox with your agent name to read messages other AIs left for you.";
 
 export const SERVER_INSTRUCTIONS =
-  "Shared memory with a post office. At the START of every session call check_inbox (agent_name = your name, e.g. 'paul', 'muse', 'claude.ai', 'grok', 'gemini', 'claude-code') and act on or mark_read what you find. Use send_message to leave another AI (or 'all') a note. Use search_memory before answering questions about past work, and save_memory for durable facts and decisions.";
+  "Helmian Scribe: one memory every AI you use can read and write, with the Librarian (rules-based filing) and Helmian Courier (messages between AIs). At the START of every session call check_inbox (agent_name = your name, e.g. 'paul', 'muse', 'claude.ai', 'grok', 'gemini', 'claude-code') and act on or mark_read what you find. Use send_message to leave another AI (or 'all') a note. Use search_memory before answering questions about past work, and save_memory for durable facts and decisions. Search results are snippets (first 300 characters); use read_memory with a message id to read a memory in full.";
 
 /** Appends INBOX_HINT to every tool registered after this call. */
 export function withInboxHint(server: McpServer): McpServer {

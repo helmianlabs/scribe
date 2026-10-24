@@ -1,23 +1,23 @@
 /**
- * The MCP server definition: exposes `search_memory` (read) and `save_memory`
- * (write) over the Streamable HTTP transport. Search runs on a read-only Neon
- * role; saving runs on a separate INSERT + SELECT-only Neon role and requires
- * the memory.write OAuth scope.
+ * The MCP server definition: exposes `search_memory` + `read_memory` (read)
+ * and `save_memory` (write) over the Streamable HTTP transport. Search runs
+ * on a read-only Neon role; saving runs on a separate INSERT + SELECT-only
+ * Neon role and requires the memory.write OAuth scope.
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { searchMemory, saveMemory, librarianPools } from "./db.js";
+import { searchMemory, saveMemory, getMessageById, mailboxDigest, librarianPools } from "./db.js";
 import { Librarian } from "./librarian-tools.js";
 import { CHARACTER_LIMIT } from "./config.js";
 import { prepareContent, findingsToFlags, recordFlags, summarize } from "./flags/service.js";
 import { listFlags } from "./flags/store.js";
 import { scanText, SEVERITIES, type Severity } from "./flags/scanner.js";
 import type { AlertTarget } from "./flags/alerts.js";
-import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "./postoffice/tools.js";
+import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "./courier/tools.js";
 
 /** Self-host alerts go to ALERT_EMAIL_TO and/or ALERT_WEBHOOK_URL (both optional; stubbed if absent). */
 function selfAlertTarget(): AlertTarget {
-  return { tenantId: "self", tenantName: "Shared Memory", email: process.env.ALERT_EMAIL_TO || null, webhookUrl: process.env.ALERT_WEBHOOK_URL || null };
+  return { tenantId: "self", tenantName: "Helmian Scribe", email: process.env.ALERT_EMAIL_TO || null, webhookUrl: process.env.ALERT_WEBHOOK_URL || null };
 }
 
 const SearchMemoryInputSchema = z
@@ -66,9 +66,32 @@ function errorResult(prefix: string, err: unknown) {
   return { content: [{ type: "text" as const, text: `${prefix}: ${msg}` }], isError: true };
 }
 
+/**
+ * The piggyback mailbox block appended to search_memory / save_memory text
+ * results: one line per recipient tag with recent mail (count + newest
+ * message). Never throws — on any error it returns "" so the main tool
+ * result is unaffected.
+ */
+async function mailboxBlock(): Promise<string> {
+  try {
+    const entries = await mailboxDigest();
+    if (entries.length === 0) {
+      return "\n\n--- MAILBOX --- no recent mail for anyone.";
+    }
+    const lines = entries.map(
+      (e) =>
+        `${e.tag}: ${e.recent_count} recent, newest #${e.newest_id} from ${e.newest_sender} (${e.newest_created_at.slice(0, 10)}): ${e.newest_first_line}`
+    );
+    return `\n\n--- MAILBOX ---\n${lines.join("\n")}`;
+  } catch {
+    return "";
+  }
+}
+
 export function buildMcpServer(scopes: string[] = [], identity: { clientId?: string | null; clientName?: string | null } = {}): McpServer {
   const server = withInboxHint(new McpServer({
-    name: "claude-memory-mcp-server",
+    name: "helmian-scribe",
+    title: "Helmian Scribe",
     version: "1.3.0",
   }, { instructions: SERVER_INSTRUCTIONS }));
 
@@ -87,6 +110,7 @@ Args:
 
 Returns: a JSON array of objects, each:
   {
+    "id": number,                 // stable message id — pass it to read_memory to fetch the full text
     "conversation_name": string,  // title of the conversation the message is in
     "sender": string,             // "human" or "assistant"
     "created_at": string,         // ISO-8601 timestamp of the message
@@ -142,8 +166,9 @@ Returns an empty array if nothing matches. This is read-only; it never modifies 
             : rows,
         };
 
+        const block = await mailboxBlock();
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(output) }],
+          content: [{ type: "text" as const, text: JSON.stringify(output) + block }],
           structuredContent: output,
         };
       } catch (err) {
@@ -157,6 +182,92 @@ Returns an empty array if nothing matches. This is read-only; it never modifies 
           ],
           isError: true,
         };
+      }
+    }
+  );
+
+  const ReadMemoryInputSchema = z
+    .object({
+      message_id: z
+        .number()
+        .int()
+        .min(1)
+        .describe("The stable numeric message id, as shown in search_memory results or returned by save_memory."),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .default(0)
+        .describe("Character offset for very long messages. If a previous read_memory call returned next_offset, pass that value to fetch the next chunk."),
+    })
+    .strict();
+
+  type ReadMemoryInput = z.infer<typeof ReadMemoryInputSchema>;
+
+  const READ_MEMORY_PAGE = 8000;
+
+  server.registerTool(
+    "read_memory",
+    {
+      title: "Read a Full Memory by ID",
+      description: `Helmian Scribe — Fetch the complete text of one message by its stable id.
+
+search_memory returns only the first 300 characters of each message; this tool returns the whole letter. Use it after search_memory: take the "id" from a search result and read the full message.
+
+Args:
+  - message_id (number, required): the message id from a search result or from save_memory.
+  - offset (number, optional): character offset for very long messages. Responses carry at most ${READ_MEMORY_PAGE} characters of text; if a response includes next_offset, call again with offset set to that value to fetch the next chunk.
+
+Returns a JSON object: { id, sender, created_at, conversation_name, text, text_length, offset, returned_chars, next_offset }. next_offset is null when the whole message has been returned. Read-only; it never modifies data.`,
+      inputSchema: ReadMemoryInputSchema.shape,
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: true,
+      },
+    },
+    async (params: ReadMemoryInput) => {
+      try {
+        const msg = await getMessageById(params.message_id);
+        if (!msg) {
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: `No message found with id ${params.message_id}. Check the id from a search_memory result and try again.`,
+              },
+            ],
+            isError: true,
+          };
+        }
+        const total = msg.text.length;
+        const offset = Math.min(params.offset ?? 0, total);
+        const chunk = msg.text.slice(offset, offset + READ_MEMORY_PAGE);
+        const nextOffset =
+          offset + chunk.length < total ? offset + chunk.length : null;
+        const output = {
+          id: msg.id,
+          sender: msg.sender,
+          created_at: msg.created_at,
+          conversation_name: msg.conversation_name,
+          text: chunk,
+          text_length: total,
+          offset,
+          returned_chars: chunk.length,
+          next_offset: nextOffset,
+          ...(nextOffset !== null
+            ? {
+                note: `This message is ${total} characters long. You are reading characters ${offset}–${offset + chunk.length - 1}. Call read_memory again with offset ${nextOffset} to continue.`,
+              }
+            : {}),
+        };
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(output) }],
+          structuredContent: output,
+        };
+      } catch (err) {
+        return errorResult("Error reading memory", err);
       }
     }
   );
@@ -208,7 +319,7 @@ Returns an empty array if nothing matches. This is read-only; it never modifies 
     "save_memory",
     {
       title: "Save a Memory",
-      description: `Save a new memory into Sam's shared memory so that every connected AI (Claude, ChatGPT, Grok, Gemini, the coding tools) can find it later with search_memory.
+      description: `Save a new memory into Helmian Scribe (Sam's shared memory) so that every connected AI (Claude, ChatGPT, Grok, Gemini, the coding tools) can find it later with search_memory.
 
 The memory is filed as a message in a notebook conversation: with a category, the notebook is "Shared Memory — <category>" and is shared across AIs; without one, it goes to "Shared Memory — <source>". The writing AI is recorded as the sender.
 
@@ -266,8 +377,9 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
           alert = rec.alert;
         } catch { /* flags table missing or transient: the save still stands, redaction already applied */ }
         const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded, redactions: prepared.redactions, flags: summarize(prepared.findings), flag_ids: flagIds, alert };
+        const block = await mailboxBlock();
         return {
-          content: [{ type: "text" as const, text: JSON.stringify(output) }],
+          content: [{ type: "text" as const, text: JSON.stringify(output) + block }],
           structuredContent: output,
         };
       } catch (err) {
@@ -402,15 +514,15 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
     }
   );
 
-  // ---------------------------------------------------------------- Post office
+  // ---------------------------------------------------------------- Helmian Courier
   // Append-only on the write pool (memory_rw: SELECT + INSERT), tenant 'self'.
   registerPostOfficeTools(server, {
     canWrite, tenantId: "self", identity,
     run: async (fn) => {
       try { return jsonResult(await fn(librarianPools().write)); }
       catch (e) {
-        if ((e as { code?: string }).code === "42P01") return errorResult("Post office", new Error("not installed yet (migration 006_post_office.sql)"));
-        return errorResult("Post office", e);
+        if ((e as { code?: string }).code === "42P01") return errorResult("Helmian Courier", new Error("not installed yet (migration 006_courier.sql)"));
+        return errorResult("Helmian Courier", e);
       }
     },
   });

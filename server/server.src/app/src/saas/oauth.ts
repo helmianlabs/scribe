@@ -89,6 +89,7 @@ export class SaasOAuth implements OAuthServerProvider {
       [sha256(code), p.client_id, p.redirect_uri, p.code_challenge, p.scopes, p.resource, tenantId, userId, CODE_TTL]);
     const url = new URL(p.redirect_uri);
     url.searchParams.set("code", code);
+    url.searchParams.set("iss", this.publicUrl);
     if (p.state != null) url.searchParams.set("state", p.state);
     return url.toString();
   }
@@ -100,6 +101,7 @@ export class SaasOAuth implements OAuthServerProvider {
     const url = new URL(p.redirect_uri);
     url.searchParams.set("error", "access_denied");
     url.searchParams.set("error_description", "The user denied the authorization request.");
+    url.searchParams.set("iss", this.publicUrl);
     if (p.state != null) url.searchParams.set("state", p.state);
     return url.toString();
   }

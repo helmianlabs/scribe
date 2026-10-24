@@ -47,6 +47,30 @@ export async function searchMemory(q: Q, tenantId: string, p: { query: string; s
   return r.rows.map((x) => ({ message_id: Number(x.message_id), conversation_name: x.conversation_name, sender: x.sender, created_at: iso(x.created_at), snippet: x.snippet ?? "" }));
 }
 
+export interface FullMessage {
+  id: number;
+  sender: string;
+  created_at: string;
+  conversation_name: string;
+  text: string;
+}
+
+/**
+ * Fetch one complete message by its stable id (the read_memory backing query),
+ * scoped to the tenant both explicitly and by the caller's RLS transaction.
+ * Returns null when the tenant has no message with that id — another tenant's
+ * message is indistinguishable from a missing one.
+ */
+export async function getMessageById(q: Q, tenantId: string, id: number): Promise<FullMessage | null> {
+  const r = await q.query(
+    `SELECT m.id AS id, m.sender AS sender, m.created_at AS created_at, c.name AS conversation_name, m.text AS text
+     FROM messages m JOIN conversations c ON c.uuid = m.conversation_uuid AND c.tenant_id = m.tenant_id
+     WHERE m.tenant_id = $1 AND m.id = $2`, [tenantId, id]);
+  const x = r.rows[0];
+  if (!x) return null;
+  return { id: Number(x.id), sender: x.sender, created_at: iso(x.created_at), conversation_name: x.conversation_name, text: x.text ?? "" };
+}
+
 export interface SaveParams { content: string; source: string; category?: string; tags?: string[]; }
 
 export async function saveMemory(q: Q, tenantId: string, plan: Plan, p: SaveParams) {
@@ -162,7 +186,7 @@ export async function exportAll(q: Q, tenantId: string) {
     const r = await q.query(`SELECT * FROM ${t} WHERE tenant_id = $1 ORDER BY 1`, [tenantId]);
     out[t] = r.rows;
   }
-  return { format: "shared-memory-export", version: 1, tenant_id: tenantId, exported_at: new Date().toISOString(), tables: out };
+  return { format: "helmian-scribe-export", version: 1, tenant_id: tenantId, exported_at: new Date().toISOString(), tables: out };
 }
 
 /** Deletes every memory row for the tenant (keeps the account, billing and API keys). */

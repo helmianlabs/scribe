@@ -1,9 +1,9 @@
-# Local staging for the hosted (SaaS) mode. Throwaway Postgres, nothing leaves this machine.
+# Local staging for Helmian Scribe, hosted (SaaS) mode. Throwaway Postgres, nothing leaves this machine.
 #   docker compose -f staging/docker-compose.yml up -d --build
 #   node staging/smoke.mjs
 #   docker compose -f staging/docker-compose.yml down -v
 # Never point this at Sam's production database.
-name: smm-staging
+name: helmian-scribe-staging
 services:
   db:
     image: postgres:16-alpine
@@ -17,7 +17,8 @@ services:
       - ../migrations/001_librarian.sql:/docker-entrypoint-initdb.d/10_001_librarian.sql:ro
       - ../migrations/004_flags.sql:/docker-entrypoint-initdb.d/40_004_flags.sql:ro
       - ../migrations/005_saas.sql:/docker-entrypoint-initdb.d/50_005_saas.sql:ro
-      - ../migrations/006_post_office.sql:/docker-entrypoint-initdb.d/60_006_post_office.sql:ro
+      - ../migrations/006_courier.sql:/docker-entrypoint-initdb.d/60_006_courier.sql:ro
+      - ../migrations/007_stripe_events_status.sql:/docker-entrypoint-initdb.d/70_007_stripe_events_status.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U owner -d memory"]
       interval: 2s
@@ -34,7 +35,7 @@ services:
       db: { condition: service_healthy }
     ports: ["8787:8080"]
     environment:
-      MEMORY_MODE: saas
+      SCRIBE_MODE: saas
       PORT: "8080"
       PUBLIC_URL: http://localhost:8787
       DATABASE_URL: postgres://memory_app:staging-only-app-password@db:5432/memory

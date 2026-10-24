@@ -166,6 +166,7 @@ export function approveAuthorization(pendingId: string): string | null {
 
   const url = new URL(p.redirectUri);
   url.searchParams.set("code", code);
+  url.searchParams.set("iss", PUBLIC_URL);
   if (p.state !== undefined) url.searchParams.set("state", p.state);
   return url.toString();
 }
@@ -181,6 +182,7 @@ export function denyAuthorization(pendingId: string): string | null {
   const url = new URL(p.redirectUri);
   url.searchParams.set("error", "access_denied");
   url.searchParams.set("error_description", "The user denied the authorization request.");
+  url.searchParams.set("iss", PUBLIC_URL);
   if (p.state !== undefined) url.searchParams.set("state", p.state);
   return url.toString();
 }

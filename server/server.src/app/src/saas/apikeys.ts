@@ -3,8 +3,11 @@ import type { Db } from "./db.js";
 import { sha256, randomToken, newId } from "./crypto.js";
 import { LimitError, type Plan } from "./plans.js";
 
-export const API_KEY_SCOPES = ["flags.write", "flags.read"] as const;
+export const API_KEY_SCOPES = ["flags.write", "flags.read", "mailbox.read"] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
+
+/** Keys created without an explicit scope list keep the historical Flags-only grant. */
+export const DEFAULT_API_KEY_SCOPES: ApiKeyScope[] = ["flags.write", "flags.read"];
 
 export interface ApiKeyAuth { keyId: string; tenantId: string; name: string; scopes: string[]; }
 
@@ -15,12 +18,13 @@ export class ApiKeys {
     const n = (await this.db.control.query("SELECT count(*)::int AS n FROM api_keys WHERE tenant_id = $1 AND revoked_at IS NULL", [tenantId])).rows[0].n;
     if (n >= plan.maxApiKeys) throw new LimitError(`The ${plan.name} plan allows ${plan.maxApiKeys} active API key${plan.maxApiKeys > 1 ? "s" : ""}. Revoke one or upgrade.`, "api_keys");
     const clean = scopes.filter((s): s is ApiKeyScope => (API_KEY_SCOPES as readonly string[]).includes(s));
+    const granted = clean.length ? clean : [...DEFAULT_API_KEY_SCOPES];
     const key = `smk_${randomToken(30)}`;
     const id = newId();
     await this.db.control.query(
       "INSERT INTO api_keys (id, tenant_id, name, key_hash, prefix, scopes, created_by) VALUES ($1,$2,$3,$4,$5,$6,$7)",
-      [id, tenantId, name.slice(0, 60) || "API key", sha256(key), key.slice(0, 10), clean.length ? clean : [...API_KEY_SCOPES], createdBy]);
-    return { id, key, prefix: key.slice(0, 10), scopes: clean.length ? clean : [...API_KEY_SCOPES] };
+      [id, tenantId, name.slice(0, 60) || "API key", sha256(key), key.slice(0, 10), granted, createdBy]);
+    return { id, key, prefix: key.slice(0, 10), scopes: granted };
   }
 
   async list(tenantId: string) {

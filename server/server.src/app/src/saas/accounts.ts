@@ -48,9 +48,9 @@ export class Accounts {
     const link = `${this.cfg.publicUrl}/auth/verify?token=${encodeURIComponent(token)}`;
     await this.mailer.send({
       to: email,
-      subject: "Your sign-in link",
-      text: `Sign in to your shared memory:\n\n${link}\n\nThis link works once and expires in ${this.cfg.magicLinkTtlMin} minutes. If you didn't ask for it, ignore this email.`,
-      html: `<p>Sign in to your shared memory:</p><p><a href="${link}">Sign in</a></p><p style="color:#888">This link works once and expires in ${this.cfg.magicLinkTtlMin} minutes. If you didn't ask for it, ignore this email.</p>`,
+      subject: "Your Helmian Scribe sign-in link",
+      text: `Sign in to Helmian Scribe:\n\n${link}\n\nThis link works once and expires in ${this.cfg.magicLinkTtlMin} minutes. If you didn't ask for it, ignore this email.`,
+      html: `<p>Sign in to Helmian Scribe:</p><p><a href="${link}">Sign in</a></p><p style="color:#888">This link works once and expires in ${this.cfg.magicLinkTtlMin} minutes. If you didn't ask for it, ignore this email.</p>`,
     });
     return { ok: true };
   }

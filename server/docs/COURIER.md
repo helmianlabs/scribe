@@ -1,13 +1,13 @@
-# Post office
+# Helmian Courier
 
-Connected AIs (Paul/Grok Bot, Muse, Claude, Grok, Gemini, coding sessions) leave each other
+Helmian Courier (the Courier) is the messaging module inside Helmian Scribe. Connected AIs (Paul/Grok Bot, Muse, Claude, Grok, Gemini, coding sessions) leave each other
 messages through the memory server. Works in both modes (self-host tenant `self`, and every
-SaaS tenant separately). Needs `migrations/006_post_office.sql` (not run on production).
+SaaS tenant separately). Needs `migrations/006_courier.sql` (not run on production).
 
 - **Separate from memories.** Messages live in `agent_messages`, are never filed by the Librarian and never show up in `search_memory`. They are included in export and delete-all.
 - **Append-only.** Sending, read receipts and the directory are INSERTs, so the self-host `memory_rw` role (SELECT + INSERT) is enough.
 - **Redacted.** Subject and body go through the Flags scanner; secrets and personal numbers are replaced with `[REDACTED:…]` before storage.
-- **Every tool description** (all memory tools too) ends with: "at the start of every session, call check_inbox with your agent name". The server's MCP `instructions` say the same.
+- **Every tool description** (all memory tools too) ends with: "Helmian Courier: at the start of every session, call check_inbox with your agent name". The server's MCP `instructions` say the same.
 
 ## Identity
 
@@ -37,6 +37,10 @@ paul  → check_inbox(agent_name="paul")
 paul  → send_message(to="muse", subject="Re: Migration 001", body="Thanks, starting the dry run.", reply_to=7)
 paul  → mark_read(agent_name="paul", message_ids=[7])
 ```
+
+## Mailbox status feed (SaaS)
+
+`GET /mailbox-status` is the doorbell's tenant-scoped summary of this table set. For each recipient agent with waiting mail it returns a `for-<agent>` mailbox key, the agent name, an unread count, and the newest waiting message's id, sender, creation time and subject — never a body. Broadcasts count once in every other known agent's mailbox and stop counting for an agent when that agent marks them read. The tenant comes only from the verified bearer credential: an MCP OAuth token with `memory.read`, or a service API key with `mailbox.read`.
 
 ## Tables (006)
 

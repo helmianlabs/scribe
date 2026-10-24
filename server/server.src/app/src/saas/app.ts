@@ -18,10 +18,12 @@ import { ApiKeys, type ApiKeyAuth } from "./apikeys.js";
 import { planFor, LimitError, PLANS, type PlanId } from "./plans.js";
 import { buildTenantMcpServer, alertTargetFor } from "./mcp.js";
 import { countCall, usage, exportAll, deleteAll } from "./memory.js";
+import { importHistory, ImportError, MAX_ZIP_BYTES } from "./importer.js";
+import { courierMailboxStatus } from "../courier/store.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
-import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, DASHBOARD_JS } from "./pages.js";
+import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, DASHBOARD_JS } from "./pages.js";
 
 const COOKIE = "smm_session";
 
@@ -103,7 +105,7 @@ export function createSaasApp(deps: SaasDeps) {
   };
 
   // ---------------------------------------------------------------- public pages + sign-in
-  app.get("/", (_req, res) => res.json({ name: "shared-memory", mode: "saas", status: "ok", sign_in: `${cfg.publicUrl}/login` }));
+  app.get("/", (_req, res) => res.json({ name: "helmian-scribe", product: "Helmian Scribe", mode: "saas", status: "ok", sign_in: `${cfg.publicUrl}/login` }));
   app.get("/healthz", (_req, res) => res.status(200).send("ok"));
   app.get("/login", (req, res) => html(res, 200, signInPage({ returnTo: safeReturnTo(req.query.return_to) })));
   app.post("/auth/start", limiter(20, 60 * 60 * 1000), express.urlencoded({ extended: false }), express.json(), wrap(async (req, res) => {
@@ -125,23 +127,80 @@ export function createSaasApp(deps: SaasDeps) {
   }));
   app.get("/logout", wrap(async (req, res) => { await accounts.endSession(cookies(req)[COOKIE]); clearSession(res); res.redirect(303, "/login"); }));
   app.get("/dashboard", (_req, res) => html(res, 200, dashboardPage()));
+  app.get("/getting-started", (_req, res) => html(res, 200, gettingStartedPage()));
   app.get("/static/dashboard.js", (_req, res) => res.set("Content-Type", "text/javascript; charset=utf-8").send(DASHBOARD_JS));
   app.get("/billing/mock", (_req, res) => html(res, 200, mockBillingPage()));
 
   // ---------------------------------------------------------------- OAuth (AS) + consent by signed-in account
+  // Custom discovery documents (registered BEFORE the SDK router below so
+  // Express matches these first — the same strict-document approach the
+  // self-host surface uses in single.ts). The SDK router builds its metadata
+  // from URL objects, whose .href for an origin always ends in "/", and omits
+  // jwks_uri and the iss advertisement; strict validators (Google's Gemini
+  // app checker rejected exactly those documents on the box) canonicalize the
+  // issuer WITHOUT the slash. Here every value is a string built from
+  // cfg.publicUrl, which config.ts guarantees is the exact slash-less origin —
+  // so the documents, the `iss` the OAuth provider puts on authorize
+  // redirects (oauth.ts), and the WWW-Authenticate pointers all agree.
+  // Access tokens are opaque (validated against the server-side store), so
+  // the JWKS is empty; the field exists because OIDC-bred validators
+  // require it.
+  const AS_METADATA = {
+    issuer: cfg.publicUrl,
+    authorization_endpoint: `${cfg.publicUrl}/authorize`,
+    token_endpoint: `${cfg.publicUrl}/token`,
+    registration_endpoint: `${cfg.publicUrl}/register`,
+    revocation_endpoint: `${cfg.publicUrl}/revoke`,
+    jwks_uri: `${cfg.publicUrl}/.well-known/jwks.json`,
+    response_types_supported: ["code"],
+    grant_types_supported: ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["client_secret_post", "none"],
+    revocation_endpoint_auth_methods_supported: ["client_secret_post"],
+    scopes_supported: SCOPES,
+    authorization_response_iss_parameter_supported: true,
+  };
+  app.get(["/.well-known/oauth-authorization-server", "/.well-known/oauth-authorization-server/"], (_req, res) => {
+    res.status(200).json(AS_METADATA);
+  });
+  app.get("/.well-known/openid-configuration", (_req, res) => {
+    res.status(200).json(AS_METADATA);
+  });
+  app.get("/.well-known/jwks.json", (_req, res) => {
+    res.status(200).json({ keys: [] });
+  });
+  const PR_METADATA = {
+    resource: `${cfg.publicUrl}/mcp`,
+    authorization_servers: [cfg.publicUrl],
+    scopes_supported: SCOPES,
+    resource_name: "Helmian Scribe",
+    bearer_methods_supported: ["header"],
+  };
+  app.get(
+    [
+      "/.well-known/oauth-protected-resource",
+      "/.well-known/oauth-protected-resource/",
+      "/.well-known/oauth-protected-resource/mcp",
+      "/.well-known/oauth-protected-resource/mcp/",
+    ],
+    (_req, res) => {
+      res.status(200).json(PR_METADATA);
+    }
+  );
+
   app.use(mcpAuthRouter({
     provider: oauth,
     issuerUrl: new URL(cfg.publicUrl),
     baseUrl: new URL(cfg.publicUrl),
     resourceServerUrl: genericResource,
-    resourceName: "Shared Memory",
+    resourceName: "Helmian Scribe",
     scopesSupported: SCOPES,
   }));
   app.get(/^\/\.well-known\/oauth-protected-resource\/t\/([a-z0-9]{4,40})\/mcp$/, wrap(async (req, res) => {
     const slug = (req.params as unknown as string[])[0];
     const t = await accounts.tenantBySlug(slug);
     if (!t) { res.status(404).json({ error: "not_found" }); return; }
-    res.json({ resource: mcpUrlFor(t), authorization_servers: [`${cfg.publicUrl}/`], scopes_supported: SCOPES, bearer_methods_supported: ["header"], resource_name: "Shared Memory" });
+    res.json({ resource: mcpUrlFor(t), authorization_servers: [cfg.publicUrl], scopes_supported: SCOPES, bearer_methods_supported: ["header"], resource_name: "Helmian Scribe" });
   }));
 
   async function renderConsent(req: Request, res: Response, pendingId: string, error?: string) {
@@ -203,6 +262,22 @@ export function createSaasApp(deps: SaasDeps) {
     res.on("close", () => { transport.close(); server.close(); });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);
+    // Capability log (ported from the self-host build): on an initialize
+    // request, log the client's declared capabilities — structure only, no
+    // tokens, no user data. Fully guarded; logging must never break a call.
+    try {
+      const body = req.body as { method?: unknown } | Array<{ method?: unknown }> | undefined;
+      const isInitialize = Array.isArray(body) ? body.some((m) => m?.method === "initialize") : body?.method === "initialize";
+      if (isInitialize) {
+        const caps = server.server.getClientCapabilities();
+        const client = server.server.getClientVersion();
+        const rec = (caps ?? {}) as Record<string, unknown>;
+        const known = ["sampling", "elicitation", "roots", "logging", "prompts", "resources", "tools"];
+        const presence = known.map((k) => `${k}=${rec[k] !== undefined}`).join(" ");
+        const experimental = caps?.experimental ? Object.keys(caps.experimental).join(",") : "";
+        console.log(`[mcp] initialize client=${client?.name ?? "unknown"} version=${client?.version ?? "unknown"} capabilities: ${presence} experimental=[${experimental}]`);
+      }
+    } catch { /* logging only — swallow */ }
   });
   const tenantSlug = (req: Request) => String(req.params.slug || "");
   app.post("/t/:slug/mcp", express.json({ limit: "1mb" }), handleMcp(tenantSlug));
@@ -211,6 +286,40 @@ export function createSaasApp(deps: SaasDeps) {
     app.get(path, wrap(async (req, res) => { if (await mcpAuth(req, res, req.params.slug ? String(req.params.slug) : null)) res.status(405).json({ jsonrpc: "2.0", error: { code: -32000, message: "Use POST for MCP requests." }, id: null }); }));
     app.delete(path, (_req, res) => res.status(405).end());
   }
+
+  // ---------------------------------------------------------------- Mailbox status (SaaS, tenant-scoped)
+  // The SaaS counterpart of the self-host doorbell feed. Unlike self-host mode,
+  // there is no shared status token and no tenant input: an MCP OAuth token
+  // (memory.read) or a service API key (mailbox.read) is verified first, and
+  // the tenant bound to that credential is the only tenant queried.
+  async function mailboxTenant(req: Request, res: Response): Promise<Tenant | null> {
+    const deny = (status: number, error: string, description: string) => {
+      res.set("WWW-Authenticate", `Bearer error="${error}", error_description="${description}"`);
+      res.status(status).json({ error, error_description: description });
+      return null;
+    };
+    const m = (req.header("authorization") || "").match(/^Bearer\s+(\S+)$/i);
+    if (!m) return deny(401, "invalid_token", "Missing bearer token");
+    const token = m[1];
+    if (token.startsWith("smk_")) {
+      const key = await keys.verify(token);
+      if (!key || !key.scopes.includes("mailbox.read")) return deny(401, "invalid_token", "Invalid API key or missing mailbox.read scope");
+      const tenant = await accounts.tenantById(key.tenantId);
+      return tenant ?? deny(401, "invalid_token", "Account no longer exists");
+    }
+    let auth: AuthInfo;
+    try { auth = await oauth.verifyAccessToken(token); } catch { return deny(401, "invalid_token", "Invalid or expired token"); }
+    if (!auth.scopes.includes("memory.read")) return deny(403, "insufficient_scope", "Mailbox status requires the memory.read scope");
+    const tenant = await accounts.tenantById(String(auth.extra?.tenantId || ""));
+    return tenant ?? deny(401, "invalid_token", "Account no longer exists");
+  }
+
+  app.get("/mailbox-status", wrap(async (req, res) => {
+    const tenant = await mailboxTenant(req, res);
+    if (!tenant) return;
+    const mailboxes = await db.tenant(tenant.id, (q) => courierMailboxStatus(q, tenant.id));
+    res.json({ generated_at: new Date().toISOString(), mailboxes });
+  }));
 
   // ---------------------------------------------------------------- JSON API (session cookie, or API key for /api/flags*)
   interface Caller { user: User | null; key: ApiKeyAuth | null; tenant: Tenant; role: string; }
@@ -258,7 +367,7 @@ export function createSaasApp(deps: SaasDeps) {
   api.get("/export", wrap(async (req, res) => {
     const c = await caller(req, res); if (!c) return;
     const data = await db.tenant(c.tenant.id, (q) => exportAll(q, c.tenant.id));
-    res.set("Content-Disposition", `attachment; filename="shared-memory-export-${c.tenant.slug}-${new Date().toISOString().slice(0, 10)}.json"`);
+    res.set("Content-Disposition", `attachment; filename="helmian-scribe-export-${c.tenant.slug}-${new Date().toISOString().slice(0, 10)}.json"`);
     res.json(data);
   }));
   api.post("/delete-all", wrap(async (req, res) => {
@@ -330,6 +439,26 @@ export function createSaasApp(deps: SaasDeps) {
     const text = typeof req.body?.text === "string" ? req.body.text.slice(0, 50000) : "";
     const s = scanText(text);
     res.json({ redacted: s.redacted, redactions: s.redactions, findings: s.findings.map(({ start: _s, end: _e, ...f }) => f) });
+  }));
+
+  // ---------------------------------------------------------------- History import (raw ZIP body)
+  // Registered on the app (not the JSON api router) so the body stays raw
+  // bytes. Auth is the same session-cookie caller as the rest of /api, owner
+  // only; the tenant comes from the session, never from the upload.
+  app.post("/api/import", express.raw({ type: () => true, limit: Math.ceil(MAX_ZIP_BYTES * 1.05) }), wrap(async (req, res) => {
+    const c = await caller(req, res, { ownerOnly: true }); if (!c) return;
+    const body = req.body as unknown;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      res.status(400).json({ error: "Upload your Claude or ChatGPT export .zip as the request body." }); return;
+    }
+    await db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, planOf(c.tenant)));
+    try {
+      const out = await importHistory(db, c.tenant, planOf(c.tenant), body, alertTargetFor(c.tenant, cfg.publicUrl));
+      res.json(out);
+    } catch (e) {
+      if (e instanceof ImportError) { res.status(400).json({ error: e.message }); return; }
+      throw e;
+    }
   }));
 
   app.use("/api", api);

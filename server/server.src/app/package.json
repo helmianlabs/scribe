@@ -1,7 +1,7 @@
 {
-  "name": "claude-memory-mcp-server",
+  "name": "helmian-scribe",
   "version": "2.0.0",
-  "description": "Remote MCP server (Streamable HTTP + OAuth 2.1 + DCR) exposing search_memory over Sam's Claude conversation history in Neon.",
+  "description": "Helmian Scribe: one memory every AI you use can read and write (MCP server: self-host + hosted multi-tenant), with the Librarian, Flags and Helmian Courier.",
   "type": "module",
   "main": "dist/index.js",
   "scripts": {

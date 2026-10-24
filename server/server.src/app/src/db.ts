@@ -33,6 +33,7 @@ pool.on("connect", (client) => {
 });
 
 export interface MemoryRow {
+  id: number;
   conversation_name: string;
   sender: string;
   created_at: string;
@@ -47,7 +48,8 @@ export interface SearchParams {
 
 /**
  * ILIKE search over messages.text, joined to conversations, newest first.
- * Returns conversation_name, sender, created_at, and a 300-char snippet.
+ * Returns id, conversation_name, sender, created_at, and a 300-char snippet.
+ * The id is the stable handle for read_memory (full text by id).
  */
 export async function searchMemory(params: SearchParams): Promise<MemoryRow[]> {
   const values: unknown[] = [`%${params.query}%`];
@@ -60,7 +62,8 @@ export async function searchMemory(params: SearchParams): Promise<MemoryRow[]> {
   const limitPlaceholder = `$${values.length}`;
 
   const sql = `
-    SELECT c.name        AS conversation_name,
+    SELECT m.id          AS id,
+           c.name        AS conversation_name,
            m.sender       AS sender,
            m.created_at   AS created_at,
            LEFT(m.text, 300) AS snippet
@@ -73,6 +76,7 @@ export async function searchMemory(params: SearchParams): Promise<MemoryRow[]> {
 
   const result = await pool.query(sql, values);
   return result.rows.map((r) => ({
+    id: Number(r.id),
     conversation_name: r.conversation_name,
     sender: r.sender,
     created_at:
@@ -81,6 +85,172 @@ export async function searchMemory(params: SearchParams): Promise<MemoryRow[]> {
         : String(r.created_at),
     snippet: r.snippet ?? "",
   }));
+}
+
+export interface FullMessage {
+  id: number;
+  sender: string;
+  created_at: string;
+  conversation_name: string;
+  text: string;
+}
+
+/**
+ * Fetch one complete message by its stable id (the read_memory backing query).
+ * Returns null when no message has that id.
+ */
+export async function getMessageById(id: number): Promise<FullMessage | null> {
+  const result = await pool.query(
+    `SELECT m.id         AS id,
+            m.sender     AS sender,
+            m.created_at AS created_at,
+            c.name       AS conversation_name,
+            m.text       AS text
+     FROM messages m
+     JOIN conversations c ON c.uuid = m.conversation_uuid
+     WHERE m.id = $1`,
+    [id]
+  );
+  if (result.rows.length === 0) return null;
+  const r = result.rows[0];
+  return {
+    id: Number(r.id),
+    sender: r.sender,
+    created_at:
+      r.created_at instanceof Date
+        ? r.created_at.toISOString()
+        : String(r.created_at),
+    conversation_name: r.conversation_name,
+    text: r.text ?? "",
+  };
+}
+
+export interface MailboxEntry {
+  tag: string;
+  recent_count: number;
+  newest_id: number;
+  newest_sender: string;
+  newest_created_at: string;
+  newest_first_line: string;
+}
+
+/** Recipient tags the piggyback mailbox block reports on. */
+export const MAILBOX_TAGS = [
+  "for-claude",
+  "for-mistral",
+  "for-gemini",
+  "for-grok",
+  "for-muse",
+] as const;
+
+/**
+ * First real content line of a message body: tags live in a leading
+ * "[tags: ...]" line, so skip that line and return the first line of the
+ * body itself (trimmed, blank lines dropped), capped at 100 chars.
+ */
+function firstContentLine(text: string): string {
+  const lines = String(text ?? "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  let firstLine = lines[0] ?? "";
+  if (firstLine.startsWith("[tags:") && lines.length > 1) {
+    firstLine = lines[1];
+  }
+  return firstLine.slice(0, 100);
+}
+
+export interface MailboxStatusEntry {
+  tag: string;
+  count: number;
+  newest: {
+    id: number;
+    sender: string;
+    created_at: string;
+    subject: string;
+  } | null;
+}
+
+/**
+ * Structured mailbox status for every known recipient tag (backs the
+ * token-gated GET /mailbox-status feed): how many messages from the last
+ * 14 days contain the tag, plus the newest one (id, sender, date,
+ * subject = first content line). Tags with no recent mail report
+ * count 0 and newest null. Counts and subjects only — never bodies.
+ */
+export async function mailboxStatus(): Promise<MailboxStatusEntry[]> {
+  const entries: MailboxStatusEntry[] = [];
+  for (const tag of MAILBOX_TAGS) {
+    const like = `%${tag}%`;
+    const counted = await pool.query(
+      `SELECT COUNT(*)::int AS total
+       FROM messages m
+       WHERE m.text ILIKE $1
+         AND m.created_at >= now() - interval '14 days'`,
+      [like]
+    );
+    const count = Number(counted.rows[0]?.total ?? 0);
+    if (count === 0) {
+      entries.push({ tag, count, newest: null });
+      continue;
+    }
+    const result = await pool.query(
+      `SELECT m.id, m.sender, m.created_at, m.text
+       FROM messages m
+       WHERE m.text ILIKE $1
+         AND m.created_at >= now() - interval '14 days'
+       ORDER BY m.created_at DESC, m.id DESC
+       LIMIT 1`,
+      [like]
+    );
+    const r = result.rows[0];
+    entries.push({
+      tag,
+      count,
+      newest: {
+        id: Number(r.id),
+        sender: String(r.sender),
+        created_at:
+          r.created_at instanceof Date
+            ? r.created_at.toISOString()
+            : String(r.created_at),
+        subject: firstContentLine(String(r.text ?? "")),
+      },
+    });
+  }
+  return entries;
+}
+
+/**
+ * Mailbox digest for the piggyback block: for each known recipient tag, how
+ * many messages from the last 14 days contain that tag, plus the newest one
+ * (id, sender, date, first content line). Tags live in a leading
+ * "[tags: ...]" line, so the preview skips that line and shows the first
+ * real line of the body. Tags with no recent mail are omitted.
+ *
+ * NOTE (v1 limitation): this digest is global, not scoped to the caller —
+ * every caller sees every mailbox's count. Fine for this single-user post
+ * office; per-recipient scoping arrives with the delivery ledger.
+ * Canonical line (B2): this digest backs the SELF-HOST surface only.
+ * SaaS mode never calls it — per-tenant mailbox scoping there is a
+ * separate bite (see the B2 port report), so nothing here can leak
+ * across tenants.
+ */
+export async function mailboxDigest(): Promise<MailboxEntry[]> {
+  const status = await mailboxStatus();
+  const entries: MailboxEntry[] = [];
+  for (const s of status) {
+    if (s.count === 0 || !s.newest) continue;
+    entries.push({
+      tag: s.tag,
+      recent_count: s.count,
+      newest_id: s.newest.id,
+      newest_sender: s.newest.sender,
+      newest_created_at: s.newest.created_at,
+      newest_first_line: s.newest.subject,
+    });
+  }
+  return entries;
 }
 
 export async function closePool(): Promise<void> {
