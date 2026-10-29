@@ -7,6 +7,7 @@
  * If the Librarian tables are not installed yet (migration 001 not applied),
  * saving still works; the filing is computed and reported but not recorded.
  */
+import { isMailboxCategory } from "./courier/mailboxes.js";
 import type pg from "pg";
 import {
   classify, learnFromMove, parsePlainRule, PRESETS, UNSORTED,
@@ -109,7 +110,11 @@ export class Librarian {
     const ref = (await this.read.query(
       "SELECT m.id, m.text, m.sender, c.name AS conv FROM messages m LEFT JOIN conversations c ON c.uuid = m.conversation_uuid ORDER BY m.id DESC LIMIT 500",
     )).rows.map((x) => ({ id: x.id, text: x.text ?? "", sender: x.sender, conversationName: x.conv }));
-    const { rule, note } = learnFromMove(item, toCategory, book, extra, ref);
+    // Moving a letter into a mailbox (for-<agent>) is addressing, not a topic decision:
+    // learning trigger words from it taught rules like "navbar" -> for-muse. Record, don't learn.
+    const { rule, note } = isMailboxCategory(toCategory) || isMailboxCategory(before.category)
+      ? { rule: null, note: "Mailbox move recorded; no rule learned (moves into or out of for-<agent> mailboxes never teach the Librarian)." }
+      : learnFromMove(item, toCategory, book, extra, ref);
     try {
       if (rule) await this.write.query("INSERT INTO librarian_rules (rule_key, layer, rule_json, created_by) VALUES ($1,'learned',$2,$3)", [rule.id, JSON.stringify(rule), movedBy]);
       await this.write.query("INSERT INTO memory_moves (message_id, from_category, to_category, learned_rule, moved_by) VALUES ($1,$2,$3,$4,$5)", [id, before.category, toCategory, rule?.id ?? null, movedBy]);

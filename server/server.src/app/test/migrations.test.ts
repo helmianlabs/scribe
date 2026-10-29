@@ -12,10 +12,10 @@ test("004/005/006 are idempotent and reversible; memory rows survive", async () 
   const before = await tables(db);
   for (let i = 0; i < 2; i++) { await db.exec(sql("004_flags.sql")); await db.exec(sql("005_saas.sql")); await db.exec(sql("006_courier.sql")); }
   const after = await tables(db);
-  for (const t of ["flags", "tenants", "users", "memberships", "sessions", "magic_links", "oauth_clients", "oauth_codes", "oauth_tokens", "api_keys", "usage_daily", "stripe_events", "agent_messages", "agent_message_reads", "agent_directory"]) assert.ok(after.includes(t), t);
+  for (const t of ["flags", "tenants", "users", "memberships", "sessions", "magic_links", "oauth_clients", "oauth_codes", "oauth_tokens", "api_keys", "usage_daily", "stripe_events", "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory"]) assert.ok(after.includes(t), t);
   assert.equal((await db.query<any>("SELECT tenant_id FROM messages")).rows[0].tenant_id, "self", "existing rows become tenant 'self'");
   const rls = await db.query<any>("SELECT relname FROM pg_class WHERE relrowsecurity AND relforcerowsecurity ORDER BY 1");
-  assert.deepEqual(rls.rows.map((r) => r.relname), ["agent_directory", "agent_message_reads", "agent_messages", "conversations", "flags", "librarian_rules", "librarian_settings", "memory_filings", "memory_moves", "messages", "projects", "usage_daily"]);
+  assert.deepEqual(rls.rows.map((r) => r.relname), ["agent_directory", "agent_message_reads", "agent_message_receipts", "agent_messages", "conversations", "flags", "librarian_rules", "librarian_settings", "memory_filings", "memory_moves", "messages", "projects", "usage_daily"]);
   await db.exec(sql("006_courier.down.sql"));
   await db.exec(sql("005_saas.down.sql"));
   await db.exec(sql("004_flags.down.sql"));

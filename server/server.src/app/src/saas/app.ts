@@ -19,7 +19,7 @@ import { planFor, LimitError, PLANS, type PlanId } from "./plans.js";
 import { buildTenantMcpServer, alertTargetFor } from "./mcp.js";
 import { countCall, usage, exportAll, deleteAll } from "./memory.js";
 import { importHistory, ImportError, MAX_ZIP_BYTES } from "./importer.js";
-import { courierMailboxStatus } from "../courier/store.js";
+import { courierMailboxStatus, unreadSummary, PostOfficeError } from "../courier/store.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
@@ -319,6 +319,22 @@ export function createSaasApp(deps: SaasDeps) {
     if (!tenant) return;
     const mailboxes = await db.tenant(tenant.id, (q) => courierMailboxStatus(q, tenant.id));
     res.json({ generated_at: new Date().toISOString(), mailboxes });
+  }));
+
+  // Door-knock poll for one mailbox (Guard extension, every 60-120 s). No bodies.
+  app.get("/mailbox/unread", wrap(async (req, res) => {
+    const tenant = await mailboxTenant(req, res);
+    if (!tenant) return;
+    const agent = String(req.query.agent ?? "");
+    const since = Number(req.query.since_id ?? 0);
+    try {
+      const out = await db.tenant(tenant.id, (q) => unreadSummary(q, tenant.id, agent, Number.isFinite(since) ? since : 0));
+      res.set("Cache-Control", "no-store");
+      res.json({ generated_at: new Date().toISOString(), poll_after_seconds: 60, ...out });
+    } catch (e) {
+      if (e instanceof PostOfficeError) { res.status(400).json({ error: "bad_request", error_description: e.message }); return; }
+      throw e;
+    }
   }));
 
   // ---------------------------------------------------------------- JSON API (session cookie, or API key for /api/flags*)
