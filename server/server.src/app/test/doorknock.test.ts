@@ -75,6 +75,9 @@ test("SaaS: GET /mailbox/unread is token-gated, tenant-scoped and has no bodies"
   const j = await res.json();
   assert.equal(j.unread_count, 1); assert.equal(j.newest_id, sent.data.message.id);
   assert.ok(!JSON.stringify(j).includes("secret body"));
+  await tool(me.mcp_url, paul.access_token, "save_memory", { content: "FOR: Muse\nfor-muse legacy letter", source: "paul" });
+  const lj = await (await fetch(`${origin}/mailbox/unread?agent=muse&include_legacy=1`, { headers: { authorization: `Bearer ${muse.access_token}` } })).json();
+  assert.equal(lj.legacy.recent_count, 1, JSON.stringify(lj));
   const st = await tool(me.mcp_url, muse.access_token, "inbox_status", {});
   assert.equal(st.data.unread_count, 1);
   const rd = await tool(me.mcp_url, muse.access_token, "read_message", { message_id: sent.data.message.id });
@@ -86,4 +89,17 @@ test("SaaS: GET /mailbox/unread is token-gated, tenant-scoped and has no bodies"
   const eveTok = await connect(s, eve, eme.mcp_url, { clientName: "Muse" });
   const ej = await (await fetch(`${origin}/mailbox/unread?agent=muse`, { headers: { authorization: `Bearer ${eveTok.access_token}` } })).json();
   assert.equal(ej.unread_count, 0, "other tenant sees nothing");
+});
+
+test("SaaS: /mailbox/unread answers 503 courier_not_installed when the tables are missing", async () => {
+  const s2 = await startSaas();
+  try {
+    const sam = await signIn(s2, "sam3@example.com");
+    const me = (await api(s2, sam)("/api/me")).body;
+    const tok = await connect(s2, sam, me.mcp_url, { clientName: "Muse" });
+    await s2.pg.exec("DROP TABLE agent_message_receipts, agent_message_reads, agent_messages CASCADE");
+    const r = await fetch(`${new URL(me.mcp_url).origin}/mailbox/unread?agent=muse`, { headers: { authorization: `Bearer ${tok.access_token}` } });
+    assert.equal(r.status, 503);
+    assert.equal((await r.json()).error, "courier_not_installed");
+  } finally { await s2.close(); }
 });
