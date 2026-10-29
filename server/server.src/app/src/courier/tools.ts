@@ -5,7 +5,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { Q } from "../flags/store.js";
-import { sendMessage, checkInbox, markRead, listAgents, PRIORITIES, type Identity, type Priority } from "./store.js";
+import { sendMessage, checkInbox, markRead, listAgents, readMessage, ackMessage, messageReceipts, unreadSummary, PRIORITIES, resolveSender, type Identity, type Priority } from "./store.js";
 
 export const INBOX_HINT = " Helmian Courier: at the start of every session, call check_inbox with your agent name to read messages other AIs left for you.";
 
@@ -69,6 +69,38 @@ export function registerPostOfficeTools(server: McpServer, opts: { canWrite: boo
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (p: { message_ids: number[]; agent_name?: string }) =>
     guard((q) => markRead(q, tenantId, p, identity) as Promise<Record<string, unknown>>));
+
+  server.registerTool("inbox_status", {
+    title: "Inbox Status (doorbell)",
+    description: "Cheap poll: how many unread messages wait for your mailbox, the newest id, and a cursor. Pass since_id = the previous cursor to list only new arrivals (no bodies). Use read_message to open one.",
+    inputSchema: { agent_name: agent.optional(), since_id: z.number().int().min(0).default(0) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (p: { agent_name?: string; since_id?: number }) =>
+    guard(async (q) => unreadSummary(q, tenantId, resolveSender(p.agent_name, identity), p.since_id ?? 0)));
+
+  server.registerTool("read_message", {
+    title: "Read a Message",
+    description: "Open one message in full. If it is addressed to you, this marks it read and records a 'read' receipt the sender can see automatically.",
+    inputSchema: { message_id: z.number().int().min(1), agent_name: agent.optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (p: { message_id: number; agent_name?: string }) =>
+    guard((q) => readMessage(q, tenantId, p, identity) as Promise<Record<string, unknown>>));
+
+  server.registerTool("ack_message", {
+    title: "Acknowledge Messages",
+    description: "Send an explicit receipt ('got it') for messages addressed to you, with an optional short note. Also marks them read.",
+    inputSchema: { message_ids: z.array(z.number().int().min(1)).min(1).max(200), agent_name: agent.optional(), note: z.string().max(500).optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (p: { message_ids: number[]; agent_name?: string; note?: string }) =>
+    guard((q) => ackMessage(q, tenantId, p, identity) as Promise<Record<string, unknown>>));
+
+  server.registerTool("message_receipts", {
+    title: "Receipts on Messages You Sent",
+    description: "For messages you sent: status waiting / delivered / read / acked, with who and when.",
+    inputSchema: { agent_name: agent.optional(), message_ids: z.array(z.number().int().min(1)).max(100).optional(), limit: z.number().int().min(1).max(100).default(20) },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (p: { agent_name?: string; message_ids?: number[]; limit?: number }) =>
+    guard((q) => messageReceipts(q, tenantId, p, identity) as Promise<Record<string, unknown>>));
 
   server.registerTool("list_agents", {
     title: "List Agents",

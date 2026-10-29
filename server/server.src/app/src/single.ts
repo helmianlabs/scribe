@@ -25,7 +25,9 @@ import { PUBLIC_URL, MCP_PATH, PORT, AUTH_PASSPHRASE } from "./config.js";
 import { provider, adoptClient, approveAuthorization, denyAuthorization, getPending } from "./oauth-provider.js";
 import { renderConsentPage } from "./consent.js";
 import { buildMcpServer } from "./mcp-server.js";
-import { mailboxStatus } from "./db.js";
+import { mailboxStatus, librarianPools } from "./db.js";
+import { unreadSummary, PostOfficeError } from "./courier/store.js";
+import { MAILBOXES, canonicalMailbox } from "./courier/mailboxes.js";
 
 const app = express();
 app.disable("x-powered-by");
@@ -81,6 +83,41 @@ app.get("/mailbox-status", async (req, res) => {
         .map((e) => ({ tag: e.tag, count: e.count, newest: e.newest })),
     });
   } catch {
+    res.status(500).json({ error: "mailbox status unavailable" });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Door-knock poll for ONE mailbox (Helmian Guard, every 60-120 s). Same gate
+// as /mailbox-status (MAILBOX_STATUS_TOKEN; 404 when unset). Courier unread
+// count, newest id and an id cursor; never bodies. With include_legacy=1 it
+// also counts legacy letters (memories tagged for-<agent>, last 14 days).
+// 503 courier_not_installed until migrations/006_courier.sql has been run.
+// ---------------------------------------------------------------------------
+app.get("/mailbox/unread", async (req, res) => {
+  const expected = process.env.MAILBOX_STATUS_TOKEN;
+  if (!expected) { res.status(404).json({ error: "not found" }); return; }
+  const header = req.header("authorization") ?? "";
+  const presented = header.startsWith("Bearer ") ? header.slice("Bearer ".length) : "";
+  if (!presented || !constantTimeEquals(presented, expected)) { res.status(401).json({ error: "unauthorized" }); return; }
+  const agent = String(req.query.agent ?? "");
+  const since = Number(req.query.since_id ?? 0);
+  res.set("Cache-Control", "no-store");
+  try {
+    const out: Record<string, unknown> = { generated_at: new Date().toISOString(), poll_after_seconds: 60,
+      ...(await unreadSummary(librarianPools().read, "self", agent, Number.isFinite(since) ? since : 0)) };
+    if (req.query.include_legacy === "1") {
+      const name = canonicalMailbox(String(out.agent));
+      const tags = [`for-${name}`, ...(MAILBOXES.find((m) => m.name === name)?.aliases ?? []).map((a) => `for-${a}`)];
+      const r = await librarianPools().read.query(
+        `SELECT count(*)::int AS n, max(id) AS newest FROM messages
+         WHERE created_at >= now() - interval '14 days' AND text ILIKE ANY($1::text[])`, [tags.map((t) => `%${t}%`)]);
+      out.legacy = { tags, recent_count: Number(r.rows[0].n), newest_id: r.rows[0].newest == null ? null : Number(r.rows[0].newest), window_days: 14, note: "Legacy letters have no read state; counts are by recency." };
+    }
+    res.status(200).json(out);
+  } catch (e) {
+    if (e instanceof PostOfficeError) { res.status(400).json({ error: "bad_request", error_description: e.message }); return; }
+    if ((e as { code?: string }).code === "42P01") { res.status(503).json({ error: "courier_not_installed" }); return; }
     res.status(500).json({ error: "mailbox status unavailable" });
   }
 });

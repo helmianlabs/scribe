@@ -62,7 +62,7 @@ test("OAuth consent uses the signed-in account; token works on that tenant only"
   assert.doesNotMatch(aliceTok.consentPage, /passphrase/i);
   const list = await mcp(aliceMe.mcp_url, aliceTok.access_token, "tools/list");
   const names = list.body.result.tools.map((t: any) => t.name).sort();
-  assert.deepEqual(names, ["add_rule", "check_inbox", "explain_filing", "list_agents", "list_flags", "list_unsorted", "mark_read", "move_memory", "read_memory", "report_flag", "save_memory", "search_memory", "send_message"]);
+  assert.deepEqual(names, ["ack_message", "add_rule", "check_inbox", "explain_filing", "inbox_status", "list_agents", "list_flags", "list_unsorted", "mark_read", "message_receipts", "move_memory", "read_memory", "read_message", "report_flag", "save_memory", "search_memory", "send_message"]);
   assert.ok(list.body.result.tools.every((t: any) => /check_inbox/.test(t.description)), "every tool tells AIs to check the inbox");
   // Alice's token on Bob's URL is refused.
   const cross = await mcp(bobMe.mcp_url, aliceTok.access_token, "tools/list");

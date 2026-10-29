@@ -2,6 +2,7 @@
  * Tenant-scoped memory operations. Every function runs inside db.tenant(...) (RLS active)
  * and ALSO filters by tenant_id explicitly. Nothing here can reach another tenant's rows.
  */
+import { isMailboxCategory } from "../courier/mailboxes.js";
 import { randomUUID } from "node:crypto";
 import type { Q } from "./db.js";
 import {
@@ -159,7 +160,9 @@ export class TenantLibrarian {
     const ref = (await this.q.query(
       "SELECT m.id, m.text, m.sender, c.name AS conv FROM messages m LEFT JOIN conversations c ON c.uuid = m.conversation_uuid AND c.tenant_id = m.tenant_id WHERE m.tenant_id = $1 ORDER BY m.id DESC LIMIT 500",
       [this.tenantId])).rows.map((x) => ({ id: Number(x.id), text: x.text ?? "", sender: x.sender, conversationName: x.conv }));
-    const { rule, note } = learnFromMove(item, toCategory, book, extra, ref);
+    const { rule, note } = isMailboxCategory(toCategory) || isMailboxCategory(before.category)
+      ? { rule: null, note: "Mailbox move recorded; no rule learned (moves into or out of for-<agent> mailboxes never teach the Librarian)." }
+      : learnFromMove(item, toCategory, book, extra, ref);
     if (rule) await this.q.query("INSERT INTO librarian_rules (tenant_id, rule_key, layer, rule_json, created_by) VALUES ($1,$2,'learned',$3,$4)", [this.tenantId, rule.id, JSON.stringify(rule), movedBy]);
     await this.q.query("INSERT INTO memory_moves (tenant_id, message_id, from_category, to_category, learned_rule, moved_by) VALUES ($1,$2,$3,$4,$5,$6)", [this.tenantId, id, before.category, toCategory, rule?.id ?? null, movedBy]);
     await this.record(id, { ...before, category: toCategory, winningRule: rule?.id ?? null, explanation: `Moved here by ${movedBy}. ${note}` }, "manual");
@@ -178,11 +181,11 @@ export { UNSORTED };
 
 // ------------------------------------------------------------------ export / delete-all
 // librarian_settings (the chosen rulebook) and usage_daily (fair-use metering) are kept.
-const DATA_TABLES = ["agent_message_reads", "agent_directory", "agent_messages", "flags", "memory_moves", "memory_filings", "librarian_rules", "messages", "conversations", "projects"] as const;
+const DATA_TABLES = ["agent_message_receipts", "agent_message_reads", "agent_directory", "agent_messages", "flags", "memory_moves", "memory_filings", "librarian_rules", "messages", "conversations", "projects"] as const;
 
 export async function exportAll(q: Q, tenantId: string) {
   const out: Record<string, unknown[]> = {};
-  for (const t of ["conversations", "messages", "projects", "memory_filings", "memory_moves", "librarian_rules", "librarian_settings", "flags", "usage_daily", "agent_messages", "agent_message_reads", "agent_directory"]) {
+  for (const t of ["conversations", "messages", "projects", "memory_filings", "memory_moves", "librarian_rules", "librarian_settings", "flags", "usage_daily", "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory"]) {
     const r = await q.query(`SELECT * FROM ${t} WHERE tenant_id = $1 ORDER BY 1`, [tenantId]);
     out[t] = r.rows;
   }

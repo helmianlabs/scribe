@@ -1,10 +1,12 @@
--- 006_post_office.sql — Post office: AIs message each other through the memory server.
+-- 006_courier.sql — Helmian Courier (post office): AIs message each other through the memory server.
 -- ADDITIVE ONLY. Kept separate from memories: these rows are never filed by the Librarian
 -- and never returned by search_memory. Append-only (INSERT + SELECT), so the self-host
 -- memory_rw role is enough. Self-host rows carry tenant_id 'self'.
 -- In a SaaS database (005 applied) it also turns on row-level security for the new tables.
 -- Do NOT run on Sam's production database without Sam's go-ahead.
--- Rollback: 006_post_office.down.sql
+-- Rollback: 006_courier.down.sql
+-- Idempotent: every statement is IF NOT EXISTS / ON CONFLICT-safe / DROP-then-CREATE, so re-running is a no-op.
+-- Runbook: docs/COURIER_MIGRATION_RUNBOOK.md
 BEGIN;
 
 CREATE TABLE IF NOT EXISTS agent_messages (
@@ -33,6 +35,21 @@ CREATE TABLE IF NOT EXISTS agent_message_reads (
   PRIMARY KEY (tenant_id, message_id, agent)
 );
 
+-- Door-knock receipts the SENDER can see: 'delivered' (shown to the addressee by check_inbox),
+-- 'read' (opened with read_message / mark_read), 'ack' (explicit acknowledgement, optional note).
+-- One row per (message, agent, kind); first one wins. Append-only.
+CREATE TABLE IF NOT EXISTS agent_message_receipts (
+  tenant_id  TEXT NOT NULL DEFAULT COALESCE(NULLIF(current_setting('app.tenant_id', true), ''), 'self'),
+  message_id BIGINT NOT NULL,
+  agent      TEXT NOT NULL,
+  kind       TEXT NOT NULL CHECK (kind IN ('delivered','read','ack')),
+  note       TEXT,
+  at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (tenant_id, message_id, agent, kind)
+);
+-- Cheap doorbell polls: unread lookups by recipient and id cursor.
+CREATE INDEX IF NOT EXISTS agent_messages_to_id_idx ON agent_messages (tenant_id, to_agent, id);
+
 -- Agent directory: first time a name is seen (and from which OAuth client). Insert-only.
 CREATE TABLE IF NOT EXISTS agent_directory (
   tenant_id   TEXT NOT NULL DEFAULT COALESCE(NULLIF(current_setting('app.tenant_id', true), ''), 'self'),
@@ -45,14 +62,14 @@ CREATE TABLE IF NOT EXISTS agent_directory (
 
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memory_rw') THEN
-    GRANT SELECT, INSERT ON agent_messages, agent_message_reads, agent_directory TO memory_rw;
+    GRANT SELECT, INSERT ON agent_messages, agent_message_reads, agent_message_receipts, agent_directory TO memory_rw;
     GRANT USAGE ON SEQUENCE agent_messages_id_seq TO memory_rw;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memory_ro_hz') THEN
-    GRANT SELECT ON agent_messages, agent_message_reads, agent_directory TO memory_ro_hz;
+    GRANT SELECT ON agent_messages, agent_message_reads, agent_message_receipts, agent_directory TO memory_ro_hz;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'memory_app') THEN
-    GRANT SELECT, INSERT, DELETE ON agent_messages, agent_message_reads, agent_directory TO memory_app;
+    GRANT SELECT, INSERT, DELETE ON agent_messages, agent_message_reads, agent_message_receipts, agent_directory TO memory_app;
     GRANT USAGE ON SEQUENCE agent_messages_id_seq TO memory_app;
   END IF;
 END $$;
@@ -62,7 +79,7 @@ DO $$
 DECLARE t TEXT;
 BEGIN
   IF to_regclass('public.tenants') IS NOT NULL THEN
-    FOREACH t IN ARRAY ARRAY['agent_messages','agent_message_reads','agent_directory'] LOOP
+    FOREACH t IN ARRAY ARRAY['agent_messages','agent_message_reads','agent_message_receipts','agent_directory'] LOOP
       EXECUTE format('ALTER TABLE %I ALTER COLUMN tenant_id SET DEFAULT current_setting(''app.tenant_id'', true)', t);
       EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
       EXECUTE format('ALTER TABLE %I FORCE ROW LEVEL SECURITY', t);

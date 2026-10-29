@@ -36,7 +36,7 @@ export const MIGRATION_FILES = [
 const RLS_TABLES = [
   "conversations", "messages", "projects", "librarian_settings", "librarian_rules",
   "memory_filings", "memory_moves", "flags", "usage_daily",
-  "agent_messages", "agent_message_reads", "agent_directory",
+  "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory",
 ];
 
 export function isProductionPosture(): boolean {

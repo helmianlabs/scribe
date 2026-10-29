@@ -52,3 +52,6 @@ In a SaaS database the three tables get the same FORCE row-level security as eve
 
 ## Later
 Locking names to clients (the first client to use a name owns it), message expiry, attachments as memory links, a dashboard inbox view, a webhook for `urgent` messages.
+
+## Door-knock (v1)
+Receipts (`delivered` / `read` / `ack` in `agent_message_receipts`), new tools `inbox_status`, `read_message`, `ack_message`, `message_receipts`, the canonical mailbox directory (`src/courier/mailboxes.ts`) and `GET /mailbox/unread` for Helmian Guard. Contract: `docs/DOOR_KNOCK_CONTRACT.md`. Migration runbook: `docs/COURIER_MIGRATION_RUNBOOK.md`.

@@ -19,7 +19,8 @@ import { planFor, LimitError, PLANS, type PlanId } from "./plans.js";
 import { buildTenantMcpServer, alertTargetFor } from "./mcp.js";
 import { countCall, usage, exportAll, deleteAll } from "./memory.js";
 import { importHistory, ImportError, MAX_ZIP_BYTES } from "./importer.js";
-import { courierMailboxStatus } from "../courier/store.js";
+import { courierMailboxStatus, unreadSummary, PostOfficeError } from "../courier/store.js";
+import { MAILBOXES, canonicalMailbox } from "../courier/mailboxes.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
@@ -319,6 +320,35 @@ export function createSaasApp(deps: SaasDeps) {
     if (!tenant) return;
     const mailboxes = await db.tenant(tenant.id, (q) => courierMailboxStatus(q, tenant.id));
     res.json({ generated_at: new Date().toISOString(), mailboxes });
+  }));
+
+  // Door-knock poll for one mailbox (Guard extension, every 60-120 s). No bodies.
+  app.get("/mailbox/unread", wrap(async (req, res) => {
+    const tenant = await mailboxTenant(req, res);
+    if (!tenant) return;
+    const agent = String(req.query.agent ?? "");
+    const since = Number(req.query.since_id ?? 0);
+    try {
+      res.set("Cache-Control", "no-store");
+      const legacy = req.query.include_legacy === "1";
+      const out = await db.tenant(tenant.id, async (q) => {
+        const o: Record<string, unknown> = await unreadSummary(q, tenant.id, agent, Number.isFinite(since) ? since : 0);
+        if (legacy) {
+          const name = canonicalMailbox(String(o.agent));
+          const tags = [`for-${name}`, ...(MAILBOXES.find((m) => m.name === name)?.aliases ?? []).map((a) => `for-${a}`)];
+          const r = await q.query(
+            `SELECT count(*)::int AS n, max(id) AS newest FROM messages
+             WHERE tenant_id = $1 AND created_at >= now() - interval '14 days' AND text ILIKE ANY($2::text[])`, [tenant.id, tags.map((t) => `%${t}%`)]);
+          o.legacy = { tags, recent_count: Number(r.rows[0].n), newest_id: r.rows[0].newest == null ? null : Number(r.rows[0].newest), window_days: 14, note: "Legacy letters have no read state; counts are by recency." };
+        }
+        return o;
+      });
+      res.json({ generated_at: new Date().toISOString(), poll_after_seconds: 60, ...out });
+    } catch (e) {
+      if (e instanceof PostOfficeError) { res.status(400).json({ error: "bad_request", error_description: e.message }); return; }
+      if ((e as { code?: string }).code === "42P01") { res.status(503).json({ error: "courier_not_installed" }); return; }
+      throw e;
+    }
   }));
 
   // ---------------------------------------------------------------- JSON API (session cookie, or API key for /api/flags*)
