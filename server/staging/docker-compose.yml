@@ -1,0 +1,53 @@
+# Local staging for Helmian Scribe, hosted (SaaS) mode. Throwaway Postgres, nothing leaves this machine.
+#   docker compose -f staging/docker-compose.yml up -d --build
+#   node staging/smoke.mjs
+#   docker compose -f staging/docker-compose.yml down -v
+# Never point this at Sam's production database.
+name: helmian-scribe-staging
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: memory
+      POSTGRES_USER: owner
+      POSTGRES_PASSWORD: staging-only-owner-password
+    tmpfs: [/var/lib/postgresql/data]
+    volumes:
+      - ./initdb/00_base.sql:/docker-entrypoint-initdb.d/00_base.sql:ro
+      - ../migrations/001_librarian.sql:/docker-entrypoint-initdb.d/10_001_librarian.sql:ro
+      - ../migrations/004_flags.sql:/docker-entrypoint-initdb.d/40_004_flags.sql:ro
+      - ../migrations/005_saas.sql:/docker-entrypoint-initdb.d/50_005_saas.sql:ro
+      - ../migrations/006_courier.sql:/docker-entrypoint-initdb.d/60_006_courier.sql:ro
+      - ../migrations/007_stripe_events_status.sql:/docker-entrypoint-initdb.d/70_007_stripe_events_status.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U owner -d memory"]
+      interval: 2s
+      retries: 30
+
+  hooks:  # stand-in alert-webhook receiver; appends every POST to .data/hooks.jsonl
+    image: node:22-slim
+    command: ["node", "-e", "require('http').createServer((q,s)=>{let b='';q.on('data',c=>b+=c);q.on('end',()=>{require('fs').appendFileSync('/data/hooks.jsonl',JSON.stringify({path:q.url,sig:q.headers['x-memory-signature']||null,body:b})+'\\n');s.end('ok')})}).listen(9000)"]
+    volumes: ["./.data:/data"]
+
+  app:
+    build: ../server.src/app
+    depends_on:
+      db: { condition: service_healthy }
+    ports: ["8787:8080"]
+    environment:
+      SCRIBE_MODE: saas
+      PORT: "8080"
+      PUBLIC_URL: http://localhost:8787
+      DATABASE_URL: postgres://memory_app:staging-only-app-password@db:5432/memory
+      DATABASE_SSL: disable
+      MAIL_PROVIDER: dev
+      MAIL_OUTBOX_FILE: /data/outbox.jsonl
+      STRIPE_SECRET_KEY: ${STRIPE_TEST_SECRET_KEY:-}      # optional; must be sk_test_ (live keys are refused)
+      STRIPE_PRICE_PRO: ${STRIPE_TEST_PRICE_PRO:-price_staging_pro}
+      STRIPE_PRICE_TEAM: ${STRIPE_TEST_PRICE_TEAM:-price_staging_team}
+      STRIPE_WEBHOOK_SECRET: whsec_staging_local_only_0123456789
+      ALERT_WEBHOOK_SECRET: staging-hook-secret
+      ALERT_ALLOW_HTTP_WEBHOOK: "1"
+      ALERT_EMAIL: "off"
+      PLAN_LIMITS_JSON: '{"free":{"callsPerDay":500}}'
+    volumes: ["./.data:/data"]

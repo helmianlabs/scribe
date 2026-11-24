@@ -1,0 +1,21 @@
+Librarian dry run — C — Work / personal first, then project — fixture fixtures/synthetic-sample.jsonl
+items: 30   unsorted: 7 (23.3%)
+  work/general                    9  30%
+  unsorted                        7  23.3%
+  personal                        3  10%
+  work/dairyforge-firstuse        3  10%
+  work/faith-n-light              3  10%
+  work/forge-tms                  2  6.7%
+  work/helmian                    2  6.7%
+  work/caldmere                   1  3.3%
+top rules:
+  content.work-words                 7
+  (unsorted)                         7
+  content.project.faith-n-light      3
+  content.project.dairyforge-firstuse 3
+  content.personal                   3
+  content.project.helmian            2
+  shape.work                         2
+  content.project.forge-tms          1
+  content.notebook.forge-tms         1
+  content.project.caldmere           1
