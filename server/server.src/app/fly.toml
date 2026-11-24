@@ -1,0 +1,28 @@
+# Fly.io app config for the Claude memory MCP connector.
+app = "<FLY_APP>"
+primary_region = "sjc"
+
+[build]
+
+[env]
+  PUBLIC_URL = "https://<FLY_APP>.fly.dev"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  # Single machine, never stopped: OAuth client/token state is held in-memory,
+  # so all requests for a session MUST hit the same machine. Do not scale >1
+  # without moving the OAuth store to shared storage.
+  auto_stop_machines = false
+  auto_start_machines = false
+  min_machines_running = 1
+  processes = ["app"]
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 50
+    hard_limit = 100
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -1,0 +1,972 @@
+// The extension's background service worker.
+//
+// It exists because the checking has to happen somewhere that can load ES
+// modules, and a Chrome content script cannot. The worker imports the copied
+// Helmion modules and answers three messages:
+//
+//   helmion:scan    code blocks in, per-block destructive-command verdicts out
+//   helmion:claims  prose in, per-passage unsourced-claim findings out
+//   helmion:badge   set the toolbar badge for the tab that asked
+//
+// THE BADGE BELONGS TO helmion:scan ALONE. A red count means somebody handed
+// Sam a command that would destroy something. Unsourced claims are advisory,
+// they are wrong often enough that their own source file lists the ways, and
+// letting them light the same indicator would teach him to ignore it. They are
+// drawn beside the sentence they are about and nowhere else.
+//
+// Nothing here touches the network and nothing here calls a model. Phase 1 is a
+// regular expression run against text, on this machine, and that is all.
+//
+// It is also the seam for later phases: when the local model verifier arrives,
+// it plugs in here and the content script does not change. The claim detector's
+// own two-stage design expects exactly that — every finding it returns carries
+// `needsLookup` and the extracted referent so a stage two can check ONE claim
+// instead of a whole reply.
+
+import { scanBlocks } from './scan.js';
+import {
+  ALARM_PERIOD_MIN,
+  MAILBOX_SITES,
+  SCRIBE_ALARM,
+  badgeFor,
+  getScribeSettings,
+  inboxView,
+  isConfigured as scribeConfigured,
+  noticeText,
+  pollScribe,
+  setScribeSettings,
+} from './scribe-client.js';
+import { getAuth as getScribeAuth, signIn as scribeSignIn, signOut as scribeSignOut } from './scribe-auth.js';
+import {
+  APPROVALS_ALARM,
+  approvalsView,
+  badgeTextFor as approvalsBadgeText,
+  decideApproval,
+  getApprovalsState,
+  pollApprovals,
+  setApprovalsBadgeOwned,
+  signInToApprovals,
+} from './approvals-client.js';
+import {
+  PC_APPROVALS_ALARM,
+  badgeTextFor as pcBadgeText,
+  decidePcApproval,
+  getPcApprovalsState,
+  pcApprovalsView,
+  pollPcApprovals,
+} from './pc-approvals-client.js';
+import {
+  getNudgeSettings, queuePending, readNudgeLog, runNudges, setNudgeSettings, noteTab, siteForHost,
+} from './nudge-policy.js';
+import { scanProse, scanProseProvenance } from './claims.js';
+import {
+  getUploadSettings,
+  setUploadSettings,
+  uploadNewFindings,
+} from './upload.js';
+import {
+  getExecutiveSettings,
+  pairExecutive,
+  pollApproval,
+  requestDecision,
+  setExecutiveSettings,
+} from './executive.js';
+import {
+  getFlagsSettings,
+  markAlertsSeen,
+  pollAlerts,
+  reportFlag,
+  scanText,
+  setFlagsSettings,
+} from './flags-client.js';
+import {
+  KIND_UNVERIFIED_DECISION,
+  appendEntry,
+  chromeStorage,
+  clearLedger,
+  exportBundle,
+  ledgerStats,
+  makeEntry,
+  readLedger,
+} from './ledger.js';
+
+// The one place the storage permission is used.
+const ledger = chromeStorage();
+
+// Approvals this browser session asked Executive Guard for: approvalId ->
+// { nonce, actionHash }. Kept in memory on purpose; the content script asks
+// again if the worker was evicted. Only approvals in here are ever polled.
+const pendingApprovals = new Map();
+
+function extensionVersion() {
+  try { return chrome.runtime.getManifest().version; } catch { return '0.0.0'; }
+}
+
+// Sent with Flags reports as context.browser. Only the family, never the full UA.
+function browserFamily() {
+  const ua = String((typeof navigator !== 'undefined' && navigator.userAgent) || '');
+  if (/Firefox\//.test(ua)) return 'firefox';
+  if (/Edg\//.test(ua)) return 'edge';
+  if (/Chrome\//.test(ua)) return 'chrome';
+  return 'unknown';
+}
+
+// A message from one of this extension's own content scripts (in a tab).
+function isFromOwnContentScript(sender) {
+  if (!sender || !sender.tab || sender.id !== chrome.runtime.id) return false;
+  // An extension page opened in a tab also has sender.tab; a content script's
+  // sender.url is the web page's.
+  try {
+    return !String(sender.url || '').startsWith(chrome.runtime.getURL(''));
+  } catch {
+    return false;
+  }
+}
+
+// What a content script may send for a decision. Raw page text never reaches
+// the worker for this: the content script sends a redacted summary and a hash.
+const DECIDE_KINDS = new Set(['prompt.send', 'prompt.paste', 'code.reveal']);
+function cleanAction(input) {
+  const a = input && typeof input === 'object' ? input : {};
+  if (!DECIDE_KINDS.has(a.kind)) throw new Error(`unsupported action kind: ${String(a.kind)}`);
+  if (!/^[0-9a-f]{64}$/.test(String(a.contentHash))) throw new Error('action needs a sha256 contentHash');
+  return {
+    kind: a.kind,
+    site: String(a.site || 'unknown-site').toLowerCase().slice(0, 253),
+    contentHash: String(a.contentHash),
+    riskSignals: Array.isArray(a.riskSignals) ? a.riskSignals.map(String).slice(0, 32) : [],
+    summary: String(a.summary || '').slice(0, 500),
+  };
+}
+
+const RED = '#b3261e';
+const AMBER = '#c77700';
+const BLUE = '#4a5b7a';
+
+let latestStatus = {
+  protection: 'unknown',
+  claims: 'unknown',
+};
+
+function setBadge(tabId, info) {
+  if (typeof tabId !== 'number') return;
+  try {
+    if (info.broken) {
+      chrome.action.setBadgeText({ tabId, text: '!' });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: AMBER });
+      chrome.action.setTitle({ tabId, title: 'Helmion Guard needs attention — open for details' });
+      return;
+    }
+    const dangerous = Number(info.dangerous) || 0;
+    if (dangerous > 0) {
+      chrome.action.setBadgeText({ tabId, text: String(dangerous) });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: RED });
+      chrome.action.setTitle({
+        tabId,
+        title: `Helmion Guard flagged ${dangerous} destructive code block(s) on this page`,
+      });
+      return;
+    }
+    if (info.degraded) {
+      chrome.action.setBadgeText({ tabId, text: '•' });
+      chrome.action.setBadgeBackgroundColor({ tabId, color: BLUE });
+      chrome.action.setTitle({ tabId, title: 'Helmion Guard is active — open for status' });
+      return;
+    }
+    chrome.action.setBadgeText({ tabId, text: '' });
+    chrome.action.setTitle({ tabId, title: 'Helmion Guard is watching this page' });
+  } catch (error) {
+    // A tab that closed mid-flight is not a failure worth surfacing.
+    console.warn('[Helmion Guard] badge update failed:', error.message);
+  }
+}
+
+// Three messages hand back, or destroy, the whole conversation ledger — the
+// excerpts of the user's chats this extension keeps as evidence. Everything else
+// here is stateless pattern-matching on text the caller already had.
+//
+// manifest.json declares no `externally_connectable`, so a web page cannot reach
+// this listener today, and that is the real protection. This is the second lock:
+// before 2026-08-03 the sender was not examined at ALL (it was read once, for a
+// tab id), so the day someone adds externally_connectable — or a content script
+// on one of the four matched origins is compromised — the ledger reads out to
+// whoever asks and clears with no confirmation. Only the popup needs these.
+const PRIVILEGED_TYPES = new Set([
+  'helmion:ledger',
+  'helmion:ledger-export',
+  'helmion:ledger-clear',
+  'helmion:guard-upload',
+  'helmion:guard-upload-settings',
+  'helmion:executive-settings',
+  'helmion:executive-pair',
+  'helmion:flags-settings',
+  'helmion:flags-alerts',
+  'helmion:scribe-settings',
+  'helmion:scribe-inbox',
+  'helmion:scribe-nudge',
+  'helmion:scribe-signin',
+  'helmion:nudge-settings',
+  'helmion:approvals-view',
+  'helmion:approvals-signin',
+  'helmion:approvals-decide',
+  'helmion:pc-approvals-view',
+  'helmion:pc-approvals-decide',
+  'helmion:pc-approvals-open-window',
+]);
+
+function isFromOwnPopup(sender) {
+  if (!sender || sender.tab) return false;
+  if (sender.id !== chrome.runtime.id) return false;
+  try {
+    return String(sender.url || '').startsWith(chrome.runtime.getURL('popup/'));
+  } catch {
+    // getURL unavailable. Fail CLOSED — an unverifiable sender does not get the
+    // ledger. A safety tool's evidence log is the last thing to hand out on a
+    // maybe.
+    return false;
+  }
+}
+
+// The approvals window (Bite 5) is the one own page that legitimately
+// carries a tab: chrome.windows.create puts its page in a tab inside the
+// popup window, so the no-tab rule above would refuse the very page the
+// window exists for. The window's whole contract is the two PC approvals
+// messages below, sent from that exact page; every other privileged type
+// from a tab-carried sender is still refused, every other page is still
+// refused, and a content script can never present this sender — its URL
+// is the web page it runs on, never an extension page. Same fail-closed
+// shape as above: an unverifiable sender gets nothing.
+const PC_WINDOW_TYPES = new Set([
+  'helmion:pc-approvals-view',
+  'helmion:pc-approvals-decide',
+]);
+
+function isFromOwnApprovalsWindow(sender) {
+  if (!sender || sender.id !== chrome.runtime.id) return false;
+  try {
+    return String(sender.url || '').startsWith(chrome.runtime.getURL('popup/approvals-window.html'));
+  } catch {
+    return false;
+  }
+}
+
+// ─── SCRIBE DOOR-KNOCK ─────────────────────────────────────────────────────
+// Off by default. A 1-minute alarm (MV3 floor is 30 s) polls each watched
+// mailbox when it is due (60–120 s per the server's poll_after_seconds, ±15 s
+// jitter). Guard only knocks: it never writes to Scribe; the AI's own
+// check_inbox / read_message produce the receipts. See background/scribe-client.js.
+const SCRIBE_BADGE = '#2e6b3a';
+async function syncScribeAlarm() {
+  try {
+    const s = await getScribeSettings(ledger);
+    if (!chrome.alarms) return;
+    if (scribeConfigured(s)) chrome.alarms.create(SCRIBE_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+    else { chrome.alarms.clear(SCRIBE_ALARM); await refreshGlobalBadge(); }
+  } catch (error) { console.warn('[Helmion Guard] scribe alarm sync failed:', error.message); }
+}
+async function notifyFresh(fresh) {
+  if (!fresh || !fresh.length || !chrome.notifications) return;
+  const granted = await new Promise((resolve) => {
+    try { chrome.permissions.contains({ permissions: ['notifications'] }, (ok) => resolve(Boolean(ok))); } catch { resolve(false); }
+  });
+  if (!granted) return;
+  for (const { mailbox, items } of fresh.slice(0, 4)) {
+    const t = noticeText(mailbox, items);
+    try {
+      chrome.notifications.create(`helmion-scribe:${mailbox}:${items[items.length - 1].id}`, {
+        type: 'basic', iconUrl: 'popup/icon-128.png', title: t.title, message: t.message, priority: 1,
+      });
+    } catch { /* notification is best effort */ }
+  }
+}
+function idleState() {
+  return new Promise((resolve) => {
+    try { if (!chrome.idle) { resolve('active'); return; } chrome.idle.queryState(300, (st) => resolve(st || 'active')); }
+    catch { resolve('active'); }
+  });
+}
+export async function runScribePoll(opts = {}) {
+  const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+  const idle = (await idleState()) !== 'active';
+  const result = await pollScribe(ledger, { online, idle, ...opts });
+  // 0.6.0: the badge and notices are off by default (Sam: no doorbell to click).
+  // The poll only records state; the badge arbiter below paints, and it
+  // honours the same showBadge switch when it reaches the mail tier.
+  if (typeof result.unread === 'number') await refreshGlobalBadge();
+  if (result.fresh) await notifyFresh(result.fresh);
+  await runAutoNudge(result).catch((error) => console.warn('[Helmion Guard] auto-nudge pass failed:', error && error.message));
+  return result;
+}
+// ─── SCRIBE APPROVALS POP-UP (0.7.0) ───────────────────────────────────────
+// The door (door.helmian.cloud/approvals) holds the list and takes the
+// decisions; this is only its poll + badge + popup plumbing. See
+// background/approvals-client.js for the contract and the rule that the
+// passphrase is never stored. The badge is the whole signal: amber, global,
+// count only. Nothing opens, sounds or steals focus — the pop-up appears
+// when Sam clicks the icon, which is the point of the feature.
+const APPROVALS_BADGE = '#c77700';
+async function syncApprovalsAlarm() {
+  try {
+    if (!chrome.alarms) return;
+    const s = await getApprovalsState(ledger);
+    if (s.session === 'in') chrome.alarms.create(APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+    else chrome.alarms.clear(APPROVALS_ALARM);
+  } catch (error) { console.warn('[Helmion Guard] approvals alarm sync failed:', error.message); }
+}
+// ─── THE GLOBAL BADGE: ONE ARBITER ─────────────────────────────────────────
+// Three features want the icon's global (tab-less) badge text: PC approvals,
+// the Scribe door approvals, and Scribe unread mail. They used to paint it
+// independently and overwrite each other: a mail poll landing after an
+// approvals poll wiped the waiting count Sam was meant to see, and the door
+// painter had to keep a badgeOwned flag just to know whether clearing was
+// safe. Now the polls only record their state (each client already does, in
+// storage) and this one function paints, in a fixed priority:
+//
+//   1. PC approvals waiting: a decision Sam owes outranks everything.
+//   2. Scribe door approvals waiting. The door state's badgeOwned flag is
+//      kept truthful by this function: it is true exactly while the badge
+//      is showing the door count.
+//   3. Scribe unread mail, and only when the badge is switched on in the
+//      Scribe settings (off by default; see runScribePoll).
+//
+// Zero everywhere paints empty. The PER-TAB badge is a different surface:
+// setBadge() above always passes a tabId, so it never writes the global
+// text, and this arbiter never writes a tab's. Chrome shows a focused tab
+// its own badge in place of the global one; that is existing behaviour
+// and unchanged.
+const PC_BADGE = '#c77700'; // the door approvals amber: a decision waiting reads the same on both roads
+async function refreshGlobalBadge() {
+  try {
+    const pc = await getPcApprovalsState(ledger);
+    const pcText = pc.session === 'in' ? pcBadgeText(pc.count) : '';
+    if (pcText) {
+      chrome.action.setBadgeText({ text: pcText });
+      chrome.action.setBadgeBackgroundColor({ color: PC_BADGE });
+      chrome.action.setTitle({ title: `Helmian Guard: ${pc.count} PC approval(s) waiting for your decision` });
+      await setApprovalsBadgeOwned(ledger, false);
+      return;
+    }
+    const door = await getApprovalsState(ledger);
+    const doorText = approvalsBadgeText(door.session === 'in' ? door.count : 0);
+    if (doorText) {
+      chrome.action.setBadgeText({ text: doorText });
+      chrome.action.setBadgeBackgroundColor({ color: APPROVALS_BADGE });
+      chrome.action.setTitle({ title: `Helmian Guard: ${door.count} approval(s) waiting for your decision` });
+      await setApprovalsBadgeOwned(ledger, true);
+      return;
+    }
+    if (door.badgeOwned) await setApprovalsBadgeOwned(ledger, false);
+    const settings = await getScribeSettings(ledger);
+    const inbox = settings.showBadge ? await inboxView(ledger) : null;
+    const mailText = inbox ? badgeFor(inbox.unread) : '';
+    chrome.action.setBadgeText({ text: mailText });
+    if (mailText) {
+      chrome.action.setBadgeBackgroundColor({ color: SCRIBE_BADGE });
+      chrome.action.setTitle({ title: `Helmion Guard: ${inbox.unread} unread Scribe letter(s)` });
+    }
+  } catch { /* badge is best effort */ }
+}
+export async function runApprovalsPoll(opts = {}) {
+  const result = await pollApprovals(ledger, opts);
+  await refreshGlobalBadge();
+  if (result.session === 'out') await syncApprovalsAlarm();
+  return result;
+}
+// ─── PC APPROVALS (approvals pop-up build, Bites 2 and 4) ──────────────────
+// The Helmian app's own approvals (background/pc-approvals-client.js): the
+// actions an agent asked the Executive Guard to run on Sam's PC, decided
+// through Helmian's proxy — this extension holds no Guard credential for
+// this road. The wiring: this poll and the badge arbiter (Bite 2), the
+// pop-up section (Bite 3), the notification knock (Bite 4), and the
+// approvals window further below (Bite 5).
+//
+// One difference from the door poll above: this alarm is never cleared for
+// being signed out. The door's sign-in happens inside the extension, so its
+// poll can afford to stop; this sign-in happens on the website, so a poll
+// that stopped at the first 401 could never notice Sam signing back in.
+// The client folds a 401 to its signed-out state and keeps its 60-second
+// cadence; its badge contribution simply reads zero while signed out.
+async function syncPcApprovalsAlarm() {
+  try {
+    if (!chrome.alarms) return;
+    chrome.alarms.create(PC_APPROVALS_ALARM, { periodInMinutes: ALARM_PERIOD_MIN, delayInMinutes: 0.5 });
+  } catch (error) { console.warn('[Helmion Guard] pc approvals alarm sync failed:', error.message); }
+}
+export async function runPcApprovalsPoll(opts = {}) {
+  const before = await getPcApprovalsState(ledger);
+  const result = await pollPcApprovals(ledger, opts);
+  await refreshGlobalBadge();
+  // The knock (Bite 4, below) reads the rise from the state this poll
+  // just stored, set against the state as it stood before the poll ran.
+  await notifyPcKnock(before, await getPcApprovalsState(ledger));
+  return result;
+}
+// ─── PC APPROVALS KNOCK (approvals pop-up build, Bite 4) ───────────────────
+// The badge is the standing signal; this is the knock. When a poll finds
+// the waiting count has risen FROM ZERO — a first action is waiting where
+// none was — exactly one plain notification appears: no buttons, nothing
+// to decide inside it, the ask itself as its message. Further arrivals
+// while anything is already waiting do not knock again, and a count that
+// falls back to zero re-arms the knock for the next arrival. The rise is
+// decided from the client's refreshed stored state after the poll, never
+// from a stale guess.
+//
+// The knock fires only when the notifications permission is granted. That
+// permission is optional in the manifest and is asked for only from a
+// click in the pop-up (popup.js, the PC section's "Turn on alerts"
+// button) — never at install, never at startup, never from here. Without
+// it the badge alone carries the news, and nothing breaks.
+//
+// The knock is best effort throughout: the badge has already been painted
+// by the time this runs, and a browser without notifications changes
+// nothing else.
+export const PC_KNOCK_ID = 'helmion-pc-approvals';
+
+export function pcKnockText(state) {
+  const first = (state && state.items && state.items[0]) || null;
+  const ask = first && first.summary ? String(first.summary) : 'An action';
+  const count = Number(state && state.count) || 0;
+  return {
+    title: 'Helmian Guard — an action is waiting for your decision',
+    message: count > 1 ? `${ask} (${count} waiting in all.)` : ask,
+  };
+}
+
+async function notificationsGranted() {
+  return new Promise((resolve) => {
+    try {
+      if (!chrome.permissions || typeof chrome.permissions.contains !== 'function') { resolve(false); return; }
+      const r = chrome.permissions.contains({ permissions: ['notifications'] }, (ok) => { void chrome.runtime.lastError; resolve(Boolean(ok)); });
+      if (r && typeof r.then === 'function') r.then((ok) => resolve(Boolean(ok)), () => resolve(false));
+    } catch { resolve(false); }
+  });
+}
+
+export async function notifyPcKnock(before, after) {
+  try {
+    if (!chrome.notifications) return false;
+    if (!before || !after) return false;
+    if (Number(before.count) !== 0) return false; // only a rise FROM zero knocks
+    if (!(Number(after.count) > 0)) return false; // ...to something waiting
+    if (after.session !== 'in' || after.owner === false) return false; // count means waiting only then
+    if (!await notificationsGranted()) return false;
+    const t = pcKnockText(after);
+    try {
+      chrome.notifications.create(PC_KNOCK_ID, {
+        type: 'basic', iconUrl: 'popup/icon-128.png', title: t.title, message: t.message, priority: 1,
+      });
+    } catch { return false; /* notification is best effort */ }
+    return true;
+  } catch { return false; }
+}
+// ─── PC APPROVALS WINDOW (approvals pop-up build, Bite 5) ──────────────────
+// The careful decision surface: one small popup-type window showing the
+// full PC approvals list (popup/approvals-window.html). It is
+// single-instance — opening it while it stands focuses the same window
+// instead of stacking a second — and it is opened from exactly two
+// places: the pop-up's "Open approvals window" button (the
+// helmion:pc-approvals-open-window message below) and the knock's click.
+//
+// The window's id is tracked in this module's memory and cleared by the
+// onRemoved listener when the window closes. It is deliberately NOT
+// kept in storage: window ids are per browser session and get reused,
+// so a stored id could later point at somebody else's window, and the
+// storage permission belongs to the ledger alone. A service worker that
+// was evicted while the window stood open has forgotten the id, so the
+// open path also scans the open windows for one already showing the
+// page before it creates anything.
+export const PC_APPROVALS_WINDOW_PAGE = 'popup/approvals-window.html';
+export const PC_APPROVALS_WINDOW_SIZE = Object.freeze({ width: 420, height: 560 });
+let pcApprovalsWindowId = null;
+
+function windowsCall(method, ...args) {
+  return new Promise((resolve) => {
+    try {
+      const r = chrome.windows[method](...args, (value) => { void chrome.runtime.lastError; resolve(value || null); });
+      if (r && typeof r.then === 'function') r.then((value) => resolve(value || null), () => resolve(null));
+    } catch { resolve(null); }
+  });
+}
+
+async function focusPcApprovalsWindow(id) {
+  const win = await windowsCall('get', id);
+  if (!win) return false;
+  await windowsCall('update', id, { focused: true });
+  return true;
+}
+
+export async function openPcApprovalsWindow() {
+  try {
+    if (!chrome.windows || typeof chrome.windows.create !== 'function') return false;
+    if (pcApprovalsWindowId != null) {
+      if (await focusPcApprovalsWindow(pcApprovalsWindowId)) return true;
+      pcApprovalsWindowId = null;
+    }
+    const url = chrome.runtime.getURL(PC_APPROVALS_WINDOW_PAGE);
+    const all = await windowsCall('getAll', { populate: true });
+    const found = (all || []).find((w) => (w.tabs || []).some((t) => String(t.url || '') === url));
+    if (found && typeof found.id === 'number') {
+      pcApprovalsWindowId = found.id;
+      await focusPcApprovalsWindow(found.id);
+      return true;
+    }
+    const created = await windowsCall('create', {
+      url, type: 'popup', width: PC_APPROVALS_WINDOW_SIZE.width, height: PC_APPROVALS_WINDOW_SIZE.height,
+    });
+    if (created && typeof created.id === 'number') pcApprovalsWindowId = created.id;
+    return Boolean(created);
+  } catch { return false; }
+}
+
+if (chrome.windows && chrome.windows.onRemoved) {
+  chrome.windows.onRemoved.addListener((windowId) => {
+    // Closing the window decides nothing; it only forgets the window, so
+    // the next open re-reads the list into a fresh one.
+    if (windowId === pcApprovalsWindowId) pcApprovalsWindowId = null;
+  });
+}
+// ─── The knock's click target ──────────────────────────────────────────────
+// Clicking the knock opens the approvals window (Bite 5). In Bite 4 this
+// one line opened the Helmian approvals page in a tab, the decision
+// surface of that day; the re-point Bite 4 promised is this line and
+// nothing else — the listener below and the knock itself did not move.
+function openPcApprovalsSurface() {
+  try { openPcApprovalsWindow(); } catch { /* best effort */ }
+}
+// ─── SCRIBE AUTO-NUDGE (0.6.0, off by default) ─────────────────────────────
+// Queue fresh letters (ids only), then let the policy decide per open chat tab.
+// The text is fixed (nudge-policy.js nudgeText); letter content never leaves here.
+function sendToTab(tabId, message) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, message, (answer) => { void chrome.runtime.lastError; resolve(answer || null); });
+    } catch { resolve(null); }
+  });
+}
+export async function runAutoNudge(result = {}, { now = Date.now() } = {}) {
+  for (const { mailbox, items } of (result && result.mail) || []) await queuePending(ledger, mailbox, items, now);
+  return runNudges(ledger, { sendToTab, now });
+}
+function identityApi() {
+  const b = globalThis.browser && globalThis.browser.identity;
+  if (b && typeof b.launchWebAuthFlow === 'function') return { launch: (url) => b.launchWebAuthFlow({ url, interactive: true }), redirect: b.getRedirectURL() };
+  const c = chrome.identity;
+  if (c && typeof c.launchWebAuthFlow === 'function') {
+    return {
+      launch: (url) => new Promise((resolve, reject) => chrome.identity.launchWebAuthFlow({ url, interactive: true }, (final) => {
+        const err = chrome.runtime.lastError; if (err || !final) reject(new Error((err && err.message) || 'Sign-in was cancelled')); else resolve(final);
+      })),
+      redirect: c.getRedirectURL(),
+    };
+  }
+  return null;
+}
+
+// The nudge: open (or focus) the AI that owns the mailbox so it runs check_inbox.
+function openMailboxSite(mailbox) {
+  const url = MAILBOX_SITES[mailbox];
+  if (!url) { try { if (chrome.action.openPopup) chrome.action.openPopup(); } catch { /* unsupported */ } return false; }
+  try { chrome.tabs.create({ url }); return true; } catch { return false; }
+}
+if (chrome.alarms && chrome.alarms.onAlarm) {
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === SCRIBE_ALARM) runScribePoll().catch(() => {});
+    if (alarm && alarm.name === APPROVALS_ALARM) runApprovalsPoll().catch(() => {});
+    if (alarm && alarm.name === PC_APPROVALS_ALARM) runPcApprovalsPoll().catch(() => {});
+  });
+}
+if (chrome.notifications && chrome.notifications.onClicked) {
+  chrome.notifications.onClicked.addListener((id) => {
+    if (id === PC_KNOCK_ID) {
+      openPcApprovalsSurface();
+      try { chrome.notifications.clear(id); } catch { /* ignore */ }
+      return;
+    }
+    const m = /^helmion-scribe:([^:]+):/.exec(String(id));
+    if (!m) return;
+    openMailboxSite(m[1]);
+    try { chrome.notifications.clear(id); } catch { /* ignore */ }
+  });
+}
+if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); syncPcApprovalsAlarm(); });
+if (chrome.runtime.onInstalled) chrome.runtime.onInstalled.addListener(() => { syncScribeAlarm(); syncApprovalsAlarm(); syncPcApprovalsAlarm(); });
+
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  try {
+    const type = message && message.type;
+
+    if (PRIVILEGED_TYPES.has(type) && !isFromOwnPopup(sender)
+      && !(PC_WINDOW_TYPES.has(type) && isFromOwnApprovalsWindow(sender))) {
+      console.warn('[Helmion Guard] refused a privileged ledger message from an unexpected sender:', type);
+      sendResponse({ ok: false, error: 'this message is only accepted from the extension popup' });
+      return false;
+    }
+
+    if (type === 'helmion:scan') {
+      const results = scanBlocks(message.blocks || []);
+      sendResponse({ ok: true, results });
+      return false;
+    }
+
+    if (type === 'helmion:claims') {
+      const results = scanProse(message.passages || []);
+      sendResponse({ ok: true, results });
+      return false;
+    }
+
+    if (type === 'helmion:provenance') {
+      const results = scanProseProvenance(message.passages || []);
+      sendResponse({ ok: true, results });
+      return false;
+    }
+
+    // ─── THE DURABLE LEDGER ─────────────────────────────────────────────────
+    //
+    // These are async, so each returns TRUE to keep the message channel open —
+    // the one Chrome MV3 rule that silently breaks a handler if you forget it.
+    // Every path settles sendResponse exactly once, including on failure: a
+    // ledger write that fails must say so, not leave the caller waiting.
+    if (type === 'helmion:log') {
+      const entry = makeEntry(message.entry || {});
+      appendEntry(ledger, entry)
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger') {
+      readLedger(ledger)
+        .then((entries) => sendResponse({ ok: true, entries }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger-stats') {
+      ledgerStats(ledger)
+        .then((stats) => sendResponse({ ok: true, stats }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger-export') {
+      exportBundle(ledger)
+        .then((bundle) => sendResponse({ ok: true, bundle }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:ledger-clear') {
+      clearLedger(ledger)
+        .then(() => sendResponse({ ok: true }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── OPT-IN CLOUD UPLOAD ────────────────────────────────────────────────
+    //
+    // Disabled by default. The popup settings UI is the only caller. See
+    // background/upload.js for the full explanation and the warning that this
+    // needs Sam's manual browser testing.
+    if (type === 'helmion:guard-upload-settings') {
+      const payload = message.settings || {};
+      const isWrite = Object.prototype.hasOwnProperty.call(payload, 'enabled')
+        || Object.prototype.hasOwnProperty.call(payload, 'deviceToken');
+      const done = isWrite
+        ? setUploadSettings(ledger, { enabled: payload.enabled, deviceToken: payload.deviceToken })
+        : getUploadSettings(ledger);
+      done
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:guard-upload') {
+      getUploadSettings(ledger)
+        .then((settings) => {
+          if (!settings.enabled) { sendResponse({ ok: true, skipped: 'not-enabled' }); return; }
+          return uploadNewFindings(ledger).then((result) => sendResponse({ ok: true, ...result }));
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── EXECUTIVE GUARD VERIFICATION LOOP ─────────────────────────────────
+    // See background/executive.js. Without a paired server these answer from
+    // the local policy and say so (source:'local', verified:false).
+    //
+    // AT-1 T2: a decision that COMES BACK from the server and fails
+    // verification (ruleId 'unverified-decision') is a forgery attempt or a
+    // hostile server. The rejection reaches the page labelled unverified in
+    // the moment; this append gives it a durable local record too — exactly
+    // one ledger entry per unverified decision, carrying the ruleId and the
+    // verify error. Local-policy answers carry a local ruleId, not this
+    // one, so they never land here: no decision came back, nothing to file.
+    // A failed ledger write is logged and swallowed — it must never change
+    // the decision answer the page receives.
+    const fileUnverifiedDecision = async (result, site) => {
+      const entry = makeEntry({
+        kind: KIND_UNVERIFIED_DECISION,
+        site: site || '',
+        matched: result.ruleId,
+        text: result.verifyError || result.reason || '',
+        outcome: 'denied-unverified',
+      });
+      try { await appendEntry(ledger, entry); }
+      catch (error) { console.warn('[Helmion Guard] could not file an unverified decision in the ledger:', error?.message || error); }
+    };
+    if (type === 'helmion:decide') {
+      let action;
+      try { action = cleanAction(message.action); }
+      catch (error) { sendResponse({ ok: false, error: error.message }); return false; }
+      requestDecision(ledger, action, { pendingApprovals })
+        .then(async (decision) => {
+          if (decision && decision.verified === false && decision.ruleId === 'unverified-decision') {
+            await fileUnverifiedDecision(decision, action.site);
+          }
+          sendResponse({ ok: true, decision });
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approval-status') {
+      pollApproval(ledger, String(message.approvalId || ''), { pendingApprovals })
+        .then(async (status) => {
+          if (status && status.verified === false && status.ruleId === 'unverified-decision') {
+            await fileUnverifiedDecision(status, '');
+          }
+          sendResponse({ ok: true, status });
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:executive-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'serverUrl', 'deviceToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setExecutiveSettings(ledger, payload) : getExecutiveSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:executive-pair') {
+      pairExecutive(ledger)
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // ─── FLAGS ──────────────────────────────────────────────────────────────
+    // Every flag is logged locally. It is reported to the Flags API only when
+    // the user opted in (background/flags-client.js).
+    if (type === 'helmion:flag') {
+      const flag = message.flag || {};
+      const entry = makeEntry({
+        kind: 'ai-flag',
+        site: flag.site,
+        matched: `${flag.kind}: ${flag.rule}`,
+        text: flag.excerpt,
+        outcome: 'flagged',
+      });
+      appendEntry(ledger, entry)
+        .then(() => reportFlag(ledger, {
+          ...flag,
+          id: flag.id || entry.id,
+          // The page the content script runs in; flags-client keeps only the
+          // origin and path, and only on the four chat sites.
+          url: (sender && (sender.url || (sender.tab && sender.tab.url))) || undefined,
+        }, { version: extensionVersion(), browser: browserFamily() }))
+        .then((report) => sendResponse({ ok: true, report }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    // Content script: may it cross-check a message with the Flags scanner?
+    // Answers a yes/no only; the key and URL never go to a page.
+    if (type === 'helmion:flags-config') {
+      getFlagsSettings(ledger)
+        .then((s) => sendResponse({ ok: true, scanBeforeSend: s.enabled && s.scanBeforeSend && s.hasKey && Boolean(s.baseUrl) && !s.keyRejected }))
+        .catch(() => sendResponse({ ok: true, scanBeforeSend: false }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-scan') {
+      if (!isFromOwnContentScript(sender)) { sendResponse({ ok: false, error: 'not allowed' }); return false; }
+      scanText(ledger, typeof message.text === 'string' ? message.text : '')
+        .then((result) => sendResponse({ ok: true, result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-alerts') {
+      const opts = message.options || {};
+      (opts.markSeen ? markAlertsSeen(ledger).then(() => pollAlerts(ledger, { force: false })) : pollAlerts(ledger, { force: opts.force === true }))
+        .then((result) => sendResponse({ ok: true, ...result }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:flags-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'baseUrl', 'apiKey', 'scanBeforeSend', 'dailyBudget'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setFlagsSettings(ledger, payload) : getFlagsSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-settings') {
+      const payload = message.settings || {};
+      const isWrite = ['enabled', 'baseUrl', 'token', 'mailboxes', 'includeLegacy', 'dailyBudget', 'notify', 'showBadge', 'unreadPath', 'clearToken'].some((k) => Object.prototype.hasOwnProperty.call(payload, k));
+      (isWrite ? setScribeSettings(ledger, payload).then(async (r) => { await syncScribeAlarm(); return r; }) : getScribeSettings(ledger))
+        .then((settings) => sendResponse({ ok: true, settings }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-inbox') {
+      const force = message.options && message.options.force === true;
+      (force ? runScribePoll({ force: true }) : Promise.resolve({}))
+        .then(async (poll) => sendResponse({ ok: true, skipped: poll.skipped, ...(await inboxView(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:nudge-hello') {
+      // Any of the four chat origins registers its tab. Not privileged: it only
+      // says "a chat tab exists here"; the policy and switches still decide.
+      const site = sender && sender.tab && sender.tab.url ? siteForHost(new URL(sender.tab.url).hostname) : null;
+      if (site && sender.tab.id != null) noteTab(ledger, sender.tab.id, site, Date.now()).catch(() => {});
+      sendResponse({ ok: Boolean(site) });
+      return false;
+    }
+
+    if (type === 'helmion:nudge-settings') {
+      const payload = message.settings || {};
+      const write = Object.keys(payload).length > 0;
+      (write ? setNudgeSettings(ledger, payload) : getNudgeSettings(ledger))
+        .then(async (settings) => sendResponse({ ok: true, settings, log: (await readNudgeLog(ledger)).slice(-20).reverse() }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-signin') {
+      const action = message.action;
+      const run = async () => {
+        if (action === 'status') return getScribeAuth(ledger);
+        if (action === 'signout') return scribeSignOut(ledger);
+        const s = await getScribeSettings(ledger);
+        if (!s.baseUrl) throw new Error('Save the Scribe URL first');
+        const id = identityApi();
+        if (!id) throw new Error('This browser did not grant the identity permission needed for sign-in');
+        const view = await scribeSignIn(ledger, s.baseUrl, { launch: id.launch, redirectUri: id.redirect });
+        await setScribeSettings(ledger, { clearRejected: true });
+        await syncScribeAlarm();
+        return view;
+      };
+      run().then((auth) => sendResponse({ ok: true, auth })).catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-view') {
+      const force = message.options && message.options.force === true;
+      runApprovalsPoll({ force })
+        .then(async () => sendResponse({ ok: true, view: approvalsView(await getApprovalsState(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-signin') {
+      // The passphrase exists only inside this call and the client's one
+      // POST. It is never written to storage (approvals-client.js).
+      signInToApprovals(ledger, String(message.passphrase || ''))
+        .then(async (result) => {
+          await syncApprovalsAlarm();
+          await refreshGlobalBadge();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:approvals-decide') {
+      decideApproval(ledger, String(message.id || ''), message.verdict === 'approve' ? 'approve' : 'deny')
+        .then(async (result) => {
+          await refreshGlobalBadge();
+          if (result.view && result.view.session === 'out') await syncApprovalsAlarm();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:pc-approvals-view') {
+      const force = message.options && message.options.force === true;
+      runPcApprovalsPoll({ force })
+        .then(async () => sendResponse({ ok: true, view: pcApprovalsView(await getPcApprovalsState(ledger)) }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:pc-approvals-decide') {
+      // The decision goes to Helmian's own decide route through the client,
+      // which confirms it by refresh before calling it done; the badge is
+      // repainted from the refreshed state either way.
+      decidePcApproval(ledger, String(message.id || ''), message.verdict === 'approve' ? 'approve' : 'deny')
+        .then(async (result) => {
+          await refreshGlobalBadge();
+          sendResponse(result);
+        })
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:pc-approvals-open-window') {
+      // The pop-up's window button. Opening decides nothing and touches
+      // no list; it only brings the decision surface forward.
+      openPcApprovalsWindow()
+        .then((opened) => sendResponse(opened
+          ? { ok: true, opened: true }
+          : { ok: false, error: 'The approvals window could not be opened.' }))
+        .catch((error) => sendResponse({ ok: false, error: error?.message || String(error) }));
+      return true;
+    }
+
+    if (type === 'helmion:scribe-nudge') {
+      sendResponse({ ok: true, opened: openMailboxSite(String(message.mailbox || '')) });
+      return false;
+    }
+
+    if (type === 'helmion:badge') {
+      setBadge(sender && sender.tab ? sender.tab.id : undefined, message);
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (type === 'helmion:status') {
+      latestStatus = {
+        protection: ['active', 'limited', 'needs-attention'].includes(message.protection)
+          ? message.protection : 'unknown',
+        claims: ['active', 'limited', 'unavailable'].includes(message.claims)
+          ? message.claims : 'unknown',
+      };
+      sendResponse({ ok: true });
+      return false;
+    }
+
+    if (type === 'helmion:guard-status') {
+      sendResponse({ ok: true, status: latestStatus });
+      return false;
+    }
+
+    sendResponse({ ok: false, error: `unknown message type: ${String(type)}` });
+    return false;
+  } catch (error) {
+    // The content script turns this into a banner on the page. It never gets
+    // swallowed here, because a check that failed silently is the failure mode
+    // this whole extension exists to avoid.
+    sendResponse({ ok: false, error: error && error.message ? error.message : String(error) });
+    return false;
+  }
+});

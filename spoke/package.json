@@ -1,0 +1,14 @@
+{
+  "name": "scribe-spoke",
+  "version": "1.0.10",
+  "description": "Scribe Spoke: the local agent that pairs a Windows PC with the Hands hub and runs Guard-approved work on it (files, PowerShell, local LLMs, provider CLIs).",
+  "type": "module",
+  "license": "BUSL-1.1",
+  "private": true,
+  "engines": { "node": ">=20" },
+  "bin": { "hands-spoke": "./bin/hands-spoke.mjs" },
+  "scripts": {
+    "check": "node ../scripts/check-spoke.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

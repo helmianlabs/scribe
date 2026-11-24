@@ -1,0 +1,619 @@
+// Everything the extension draws on the page.
+//
+// Two channels, kept apart on purpose.
+//
+// RED — a destructive command. Somebody handed you something that deletes.
+//
+//   1. A warning attached to a code block that matched a destructive pattern.
+//      Red, named pattern, exact offending line quoted. The block itself is
+//      hidden behind it, so copying it takes a second deliberate click.
+//   2. A toast pinned to the corner, so a warning further up the page is still
+//      noticed when he has already scrolled past it.
+//   3. A compact corner alert when destructive-command protection actually
+//      stops. It never exposes parser or fallback diagnostics on the page;
+//      those stay in the console and the toolbar popup.
+//
+// QUIET — an unsourced claim. Somebody stated a checkable fact and did not say
+// where it came from. It is a reading aid, it is wrong often enough that its own
+// source file lists the ways, and it is never allowed to borrow the red channel:
+//
+//   4. A note beside the paragraph, and a dotted underline on the paragraph.
+//      Nothing is hidden, nothing is masked, and it never touches the badge.
+//   5. Health information in the toolbar popup. Advisory health never covers
+//      the page.
+//
+// Every element carries data-helmion-ui, which is how stream-watch.js tells our
+// own page changes apart from the site's and does not re-trigger itself.
+//
+// Plain script: content scripts cannot be ES modules. Publishes
+// globalThis.HelmionUI.
+
+(function attachHelmionUI(root) {
+  'use strict';
+
+  var PREFIX = 'helmion-guard';
+  var MASK_CLASS = PREFIX + '-masked';
+  // Marks a paragraph that carries an unsourced claim. A dotted underline and
+  // nothing else — it is deliberately NOT MASK_CLASS, and the two must never be
+  // used interchangeably.
+  var CLAIM_CLASS = PREFIX + '-claim-marked';
+
+  function host() {
+    if (typeof document === 'undefined') return null;
+    return document.body || document.documentElement;
+  }
+
+  function make(tag, className, text) {
+    var element = document.createElement(tag);
+    element.setAttribute('data-helmion-ui', '1');
+    if (className) element.className = className;
+    if (text !== undefined && text !== null) element.textContent = String(text);
+    return element;
+  }
+
+  // ---------------------------------------------------------------- warnings
+
+  // Clears the RED WARNING and nothing else.
+  //
+  // It used to clear the amber "part of this block was not checked" notice as
+  // well, and that made the two impossible to have at once. warnBlock starts by
+  // calling this, so on a block that was both dangerous AND part-unchecked the
+  // notice was drawn by guard.js and then destroyed a line later, inside the
+  // same pass. The page showed a red panel, which reads as "I examined this
+  // block", over a block part of which nobody had examined.
+  //
+  // The two states are independent — a block can be either, both or neither —
+  // so their teardown is independent too. That is stronger than fixing the call
+  // order, which the next person to touch applyResults could undo without
+  // noticing. Whoever resets a block resets both, explicitly.
+  function clearWarning(blockElement) {
+    if (!blockElement) return;
+    var id = blockElement.getAttribute('data-helmion-warning-id');
+    if (id) {
+      var panel = document.querySelector('[data-helmion-warning-for="' + id + '"]');
+      if (panel && panel.parentNode) panel.parentNode.removeChild(panel);
+      blockElement.removeAttribute('data-helmion-warning-id');
+    }
+    blockElement.classList.remove(MASK_CLASS);
+  }
+
+  // ------------------------------------------------------- unchecked notice
+
+  // Some lines can be too long for the scanner to examine. That is neither a
+  // match nor a clean result, and showing nothing would let a partly-checked
+  // block look exactly like a fully-checked one. This says which lines were
+  // skipped and why, in the same place the warning would appear.
+
+  function clearUnchecked(blockElement) {
+    if (!blockElement) return;
+    var id = blockElement.getAttribute('data-helmion-unchecked-id');
+    if (!id) return;
+    var existing = document.querySelector('[data-helmion-unchecked-for="' + id + '"]');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    blockElement.removeAttribute('data-helmion-unchecked-id');
+  }
+
+  // unchecked: [{ lineNumber, reason }]
+  function noteUnchecked(blockElement, unchecked) {
+    if (!blockElement) return null;
+    var lines = unchecked || [];
+    clearUnchecked(blockElement);
+    if (lines.length === 0) return null;
+
+    var id = blockElement.getAttribute('data-helmion-id') || ('helmion-u-' + Date.now());
+    blockElement.setAttribute('data-helmion-unchecked-id', id);
+
+    var notice = make('div', PREFIX + '-unchecked');
+    notice.setAttribute('data-helmion-unchecked-for', id);
+    notice.setAttribute('role', 'status');
+    notice.appendChild(make(
+      'span',
+      PREFIX + '-unchecked-title',
+      lines.length === 1
+        ? 'Helmion Guard did not check line ' + lines[0].lineNumber + ' of this block.'
+        : 'Helmion Guard did not check ' + lines.length + ' lines of this block.',
+    ));
+    notice.appendChild(make('span', PREFIX + '-unchecked-detail', lines[0].reason));
+
+    var anchor = blockElement.parentNode;
+    if (anchor) anchor.insertBefore(notice, blockElement);
+    return notice;
+  }
+
+  // finding: { id, hits: [patternName], findings: [{ lineNumber, text, hits }] }
+  function warnBlock(blockElement, finding, options) {
+    if (!blockElement) return null;
+    var settings = options || {};
+    var mask = settings.mask !== false;
+
+    clearWarning(blockElement);
+
+    var id = finding && finding.id ? String(finding.id) : ('helmion-' + Date.now());
+    blockElement.setAttribute('data-helmion-warning-id', id);
+
+    var panel = make('div', PREFIX + '-panel');
+    panel.setAttribute('data-helmion-warning-for', id);
+    panel.setAttribute('role', 'alert');
+
+    var header = make('div', PREFIX + '-panel-header');
+    header.appendChild(make('span', PREFIX + '-badge', 'HELMION GUARD'));
+    header.appendChild(make(
+      'span',
+      PREFIX + '-headline',
+      'This code block contains a destructive command.',
+    ));
+    panel.appendChild(header);
+
+    var reasons = (finding && finding.hits) || [];
+    if (reasons.length > 0) {
+      panel.appendChild(make(
+        'div',
+        PREFIX + '-reason',
+        'Matched: ' + reasons.join(', '),
+      ));
+    }
+
+    var lines = (finding && finding.findings) || [];
+    if (lines.length > 0) {
+      var list = make('ul', PREFIX + '-lines');
+      for (var i = 0; i < lines.length; i += 1) {
+        var item = make('li', PREFIX + '-line');
+        item.appendChild(make('span', PREFIX + '-line-number', 'line ' + lines[i].lineNumber));
+        item.appendChild(make('code', PREFIX + '-line-text', lines[i].text));
+        list.appendChild(item);
+      }
+      panel.appendChild(list);
+    }
+
+    if (mask) {
+      blockElement.classList.add(MASK_CLASS);
+      var reveal = make('button', PREFIX + '-reveal', 'Show the code anyway');
+      reveal.type = 'button';
+      reveal.addEventListener('click', function onReveal() {
+        blockElement.classList.remove(MASK_CLASS);
+        reveal.parentNode.removeChild(reveal);
+        panel.appendChild(make(
+          'div',
+          PREFIX + '-revealed',
+          'Shown at your request. The warning above still stands.',
+        ));
+      });
+      panel.appendChild(reveal);
+    }
+
+    var anchor = blockElement.parentNode;
+    if (anchor) anchor.insertBefore(panel, blockElement);
+    return panel;
+  }
+
+  // ------------------------------------------------------- unverified claims
+
+  // The advisory lane's only visible output.
+  //
+  // IT NEVER MASKS AND IT NEVER HIDES ANYTHING. warnBlock above puts a code
+  // block behind a cover because a destructive command is worth an extra
+  // deliberate click. A sentence is not: the finding here is "this fact was
+  // stated without a source", the detector's own source file lists four ways it
+  // can be wrong, and covering a paragraph over a machine's opinion about
+  // English would make the tool something Sam switches off. There is no mask
+  // class in this section and there must never be one.
+  //
+  // It is also kept out of the red channel entirely — no toast, no badge count.
+  // Red means somebody handed you a command that destroys something.
+
+  function clearClaims(element) {
+    if (!element) return;
+    var id = element.getAttribute('data-helmion-claims-id');
+    if (!id) return;
+    var existing = document.querySelector('[data-helmion-claims-for="' + id + '"]');
+    if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+    element.removeAttribute('data-helmion-claims-id');
+    element.classList.remove(CLAIM_CLASS);
+  }
+
+  // result: { claims: [{ sentence, marker, referentKind, referent, reason }] }
+  function noteClaims(element, result) {
+    if (!element) return null;
+    var claims = (result && result.claims) || [];
+    clearClaims(element);
+    if (claims.length === 0) return null;
+
+    var id = (result && result.id) ? String(result.id) : ('helmion-c-' + Date.now());
+    element.setAttribute('data-helmion-claims-id', id);
+    element.classList.add(CLAIM_CLASS);
+
+    var note = make('div', PREFIX + '-claims');
+    note.setAttribute('data-helmion-claims-for', id);
+    // role=note, not role=alert. An alert interrupts a screen reader mid
+    // sentence, and this is a footnote, not an emergency.
+    note.setAttribute('role', 'note');
+
+    var header = make('div', PREFIX + '-claims-header');
+    header.appendChild(make('span', PREFIX + '-claims-badge', 'UNVERIFIED CLAIM'));
+    header.appendChild(make(
+      'span',
+      PREFIX + '-claims-headline',
+      claims.length === 1
+        ? 'A fact here is stated without a source.'
+        : claims.length + ' facts here are stated without a source.',
+    ));
+    note.appendChild(header);
+
+    var list = make('ul', PREFIX + '-claims-list');
+    for (var i = 0; i < claims.length; i += 1) {
+      var item = make('li', PREFIX + '-claims-item', claims[i].reason);
+      // The kind travels onto the element so a later phase can style or filter
+      // by it without re-parsing the sentence.
+      item.setAttribute('data-helmion-referent-kind', String(claims[i].referentKind || ''));
+      list.appendChild(item);
+    }
+    note.appendChild(list);
+
+    note.appendChild(make(
+      'span',
+      PREFIX + '-claims-footer',
+      'Helmion checked whether this was sourced, not whether it is true.',
+    ));
+
+    var anchor = element.parentNode;
+    if (anchor) anchor.insertBefore(note, element);
+    return note;
+  }
+
+  // ------------------------------------------------------------------- toast
+
+  var toastElement = null;
+  var promptAlertElement = null;
+
+  function hideToast() {
+    if (toastElement && toastElement.parentNode) toastElement.parentNode.removeChild(toastElement);
+    toastElement = null;
+  }
+
+  function showToast(message, detail) {
+    var parent = host();
+    if (!parent) return null;
+    hideToast();
+    hidePromptAlert();
+
+    toastElement = make('div', PREFIX + '-toast');
+    toastElement.setAttribute('role', 'alert');
+    toastElement.appendChild(make('div', PREFIX + '-toast-title', message));
+
+    if (detail) {
+      var detailElement = make('div', PREFIX + '-toast-detail', detail);
+      detailElement.hidden = true;
+      var details = make('button', PREFIX + '-toast-details', 'Details');
+      details.type = 'button';
+      details.setAttribute('aria-expanded', 'false');
+      details.addEventListener('click', function toggleDetails() {
+        detailElement.hidden = !detailElement.hidden;
+        details.setAttribute('aria-expanded', detailElement.hidden ? 'false' : 'true');
+        details.textContent = detailElement.hidden ? 'Details' : 'Hide details';
+      });
+      toastElement.appendChild(details);
+      toastElement.appendChild(detailElement);
+    }
+
+    var close = make('button', PREFIX + '-toast-close', 'Dismiss');
+    close.type = 'button';
+    close.addEventListener('click', hideToast);
+    toastElement.appendChild(close);
+
+    parent.appendChild(toastElement);
+    return toastElement;
+  }
+
+  // ---------------------------------------------------------- prompt alert
+
+  function hidePromptAlert() {
+    if (promptAlertElement && promptAlertElement.parentNode) {
+      promptAlertElement.parentNode.removeChild(promptAlertElement);
+    }
+    promptAlertElement = null;
+  }
+
+  function showPromptAlert(message, detail, onEdit) {
+    var parent = host();
+    if (!parent) return null;
+    hideToast();
+    hidePromptAlert();
+
+    promptAlertElement = make('div', PREFIX + '-prompt-alert');
+    promptAlertElement.setAttribute('role', 'alert');
+    promptAlertElement.appendChild(make(
+      'strong',
+      PREFIX + '-prompt-alert-title',
+      'Helmion Guard blocked this request',
+    ));
+    promptAlertElement.appendChild(make(
+      'span',
+      PREFIX + '-prompt-alert-message',
+      message || 'This request could permanently erase files or data.',
+    ));
+
+    var edit = make('button', PREFIX + '-prompt-alert-edit', 'Return to editing');
+    edit.type = 'button';
+    edit.addEventListener('click', function returnToEditing() {
+      if (typeof onEdit === 'function') onEdit();
+    });
+    promptAlertElement.appendChild(edit);
+
+    if (detail) {
+      var detailElement = make('span', PREFIX + '-prompt-alert-detail', detail);
+      detailElement.hidden = true;
+      var details = make('button', PREFIX + '-prompt-alert-details', 'Details');
+      details.type = 'button';
+      details.setAttribute('aria-expanded', 'false');
+      details.addEventListener('click', function togglePromptDetails() {
+        detailElement.hidden = !detailElement.hidden;
+        details.setAttribute('aria-expanded', detailElement.hidden ? 'false' : 'true');
+        details.textContent = detailElement.hidden ? 'Details' : 'Hide details';
+      });
+      promptAlertElement.appendChild(details);
+      promptAlertElement.appendChild(detailElement);
+    }
+
+    parent.appendChild(promptAlertElement);
+    return promptAlertElement;
+  }
+
+  // -------------------------------------------------------- protection alert
+
+  var bannerElement = null;
+
+  function hideBanner() {
+    if (bannerElement && bannerElement.parentNode) {
+      bannerElement.parentNode.removeChild(bannerElement);
+    }
+    bannerElement = null;
+  }
+
+  // A real protection failure must remain visible, but it must not cover the
+  // site or expose implementation diagnostics. Technical detail is logged by
+  // guard.js and summarized in the toolbar popup instead.
+  function showBanner(message, detail) {
+    var parent = host();
+    if (!parent) return null;
+    hideBanner();
+
+    bannerElement = make('div', PREFIX + '-health-alert');
+    bannerElement.setAttribute('role', 'alert');
+    bannerElement.appendChild(make(
+      'strong',
+      PREFIX + '-health-alert-title',
+      'Helmion Guard needs attention',
+    ));
+    bannerElement.appendChild(make(
+      'span',
+      PREFIX + '-health-alert-message',
+      'Safety checks may be incomplete on this page.',
+    ));
+
+    var help = make(
+      'span',
+      PREFIX + '-health-alert-detail',
+      'Reload this page. If the alert returns, open the Helmion Guard extension for status.',
+    );
+    help.hidden = true;
+    var details = make('button', PREFIX + '-health-alert-details', 'Details');
+    details.type = 'button';
+    details.setAttribute('aria-expanded', 'false');
+    details.addEventListener('click', function toggleHealthDetails() {
+      help.hidden = !help.hidden;
+      details.setAttribute('aria-expanded', help.hidden ? 'false' : 'true');
+      details.textContent = help.hidden ? 'Details' : 'Hide details';
+    });
+    bannerElement.appendChild(details);
+    bannerElement.appendChild(help);
+
+    parent.appendChild(bannerElement);
+    return bannerElement;
+  }
+
+  // ------------------------------------------------------- advisory status
+
+  // Claim checking is advisory. Its health belongs in the toolbar popup, not in
+  // a fixed element over the host page. Keep these methods as no-op compatibility
+  // seams so the two enforcement lanes remain independently callable.
+
+  var advisoryBannerElement = null;
+
+  function hideAdvisoryBanner() {
+    if (advisoryBannerElement && advisoryBannerElement.parentNode) {
+      advisoryBannerElement.parentNode.removeChild(advisoryBannerElement);
+    }
+    advisoryBannerElement = null;
+  }
+
+  function showAdvisoryBanner(message, detail) {
+    hideAdvisoryBanner();
+    return null;
+  }
+
+
+  // ------------------------------------------------------------- ask alert
+  //
+  // The "ask" half of block-or-ask. One bounded corner card with a title, a
+  // message, an optional status line and up to three buttons. Used by the
+  // privacy lane (a secret or personal details about to be sent) and by the
+  // Executive Guard loop (waiting for, then showing, an approver's answer).
+  // Same size limits as the prompt alert; never stretches across the page.
+
+  var askAlertElement = null;
+
+  function hideAskAlert() {
+    if (askAlertElement && askAlertElement.parentNode) {
+      askAlertElement.parentNode.removeChild(askAlertElement);
+    }
+    askAlertElement = null;
+  }
+
+  function showAskAlert(options) {
+    var opts = options || {};
+    var parent = host();
+    if (!parent) return null;
+    hideAskAlert();
+    askAlertElement = make('div', PREFIX + '-ask-alert ' + PREFIX + '-tone-' + (opts.tone || 'warn'));
+    askAlertElement.setAttribute('role', 'alertdialog');
+    askAlertElement.appendChild(make('strong', PREFIX + '-ask-alert-title', opts.title || 'Helmion Guard'));
+    if (opts.message) askAlertElement.appendChild(make('span', PREFIX + '-ask-alert-message', opts.message));
+    if (opts.status) askAlertElement.appendChild(make('span', PREFIX + '-ask-alert-status', opts.status));
+    var actions = (opts.actions || []).slice(0, 3);
+    for (var i = 0; i < actions.length; i += 1) {
+      (function addAction(action) {
+        var button = make('button', PREFIX + '-ask-alert-action' + (action.primary ? ' ' + PREFIX + '-ask-alert-primary' : ''), action.label);
+        button.type = 'button';
+        if (action.id) button.setAttribute('data-helmion-action', action.id);
+        button.addEventListener('click', function onAction() {
+          if (typeof action.onClick === 'function') action.onClick();
+        });
+        askAlertElement.appendChild(button);
+      }(actions[i]));
+    }
+    parent.appendChild(askAlertElement);
+    return askAlertElement;
+  }
+
+  // ---------------------------------------------------------- approval pill
+  //
+  // The allow/deny decision as a compact pill in the bottom-right corner, so it
+  // never covers the chat. Click the pill to expand the details and the two
+  // buttons. It NEVER decides by itself: only an explicit Allow click calls
+  // onAllow. Deny, Escape-like dismissal, being replaced, and the timeout all
+  // call onDeny (timeout = deny). Default timeout 60 s.
+
+  var pillElement = null;
+  var pillTimer = null;
+
+  function closePill() {
+    if (pillTimer) clearTimeout(pillTimer);
+    pillTimer = null;
+    if (pillElement && pillElement.parentNode) pillElement.parentNode.removeChild(pillElement);
+    pillElement = null;
+  }
+
+  function showApprovalPill(options) {
+    var opts = options || {};
+    var parent = host();
+    if (!parent) { if (typeof opts.onDeny === 'function') opts.onDeny('no-page'); return null; }
+    if (pillElement && pillElement._deny) pillElement._deny('replaced');
+    var settled = false;
+    function settle(allow, why) {
+      if (settled) return;
+      settled = true;
+      closePill();
+      if (allow) { if (typeof opts.onAllow === 'function') opts.onAllow(); }
+      else if (typeof opts.onDeny === 'function') opts.onDeny(why || 'denied');
+    }
+    var el = make('div', PREFIX + '-approval-pill ' + PREFIX + '-tone-' + (opts.tone || 'warn'));
+    el.setAttribute('role', 'alertdialog');
+    el.setAttribute('aria-expanded', 'false');
+    el._deny = function (why) { settle(false, why); };
+    var toggle = make('button', PREFIX + '-approval-pill-toggle', opts.title || 'Helmion Guard: approve?');
+    toggle.type = 'button';
+    toggle.setAttribute('data-helmion-action', 'expand');
+    var details = make('div', PREFIX + '-approval-pill-details');
+    details.hidden = true;
+    if (opts.message) details.appendChild(make('span', PREFIX + '-approval-pill-message', opts.message));
+    if (opts.status) details.appendChild(make('span', PREFIX + '-approval-pill-status', opts.status));
+    var allow = make('button', PREFIX + '-approval-pill-allow', opts.allowLabel || 'Allow');
+    allow.type = 'button'; allow.setAttribute('data-helmion-action', 'allow');
+    allow.addEventListener('click', function (e) { if (e && e.isTrusted === false) return; settle(true); });
+    var deny = make('button', PREFIX + '-approval-pill-deny', opts.denyLabel || 'Deny');
+    deny.type = 'button'; deny.setAttribute('data-helmion-action', 'deny');
+    deny.addEventListener('click', function () { settle(false, 'denied'); });
+    details.appendChild(allow);
+    details.appendChild(deny);
+    toggle.addEventListener('click', function () {
+      details.hidden = !details.hidden;
+      el.setAttribute('aria-expanded', details.hidden ? 'false' : 'true');
+    });
+    el.appendChild(toggle);
+    el.appendChild(details);
+    parent.appendChild(el);
+    pillElement = el;
+    var ms = Number(opts.timeoutMs) > 0 ? Number(opts.timeoutMs) : 60000;
+    pillTimer = setTimeout(function () { settle(false, 'timeout'); }, ms);
+    return el;
+  }
+
+  // ------------------------------------------------------------ flag alerts
+  //
+  // Flags are about the AI's reply (evasion, a privacy leak, harmful code).
+  // Each gets a small card in the bottom-left corner — away from the red code
+  // lane and the prompt alerts in the top-right — at most three at a time, the
+  // oldest dropped first. Evasion is slate (advisory); leaks and harmful code
+  // are dark red. Nothing on the page is hidden by a flag.
+
+  var MAX_FLAG_ALERTS = 3;
+  var flagAlerts = [];
+  var flagStack = null;
+
+  function stack(parent) {
+    if (flagStack && flagStack.parentNode) return flagStack;
+    flagStack = make('div', PREFIX + '-flag-stack');
+    parent.appendChild(flagStack);
+    return flagStack;
+  }
+
+  function hideFlagAlerts() {
+    for (var i = 0; i < flagAlerts.length; i += 1) {
+      if (flagAlerts[i].parentNode) flagAlerts[i].parentNode.removeChild(flagAlerts[i]);
+    }
+    flagAlerts = [];
+  }
+
+  function showFlagAlert(flag) {
+    var parent = host();
+    if (!parent || !flag) return null;
+    var titles = { 'evasion': 'AI FLAG: evasion', 'privacy-leak': 'AI FLAG: privacy leak', 'harmful-code': 'AI FLAG: harmful code' };
+    var card = make('div', PREFIX + '-flag-alert ' + PREFIX + '-flag-' + (flag.kind || 'unknown'));
+    card.setAttribute('role', 'status');
+    card.setAttribute('data-helmion-flag-kind', flag.kind || 'unknown');
+    card.appendChild(make('strong', PREFIX + '-flag-alert-title', titles[flag.kind] || 'AI FLAG'));
+    card.appendChild(make('span', PREFIX + '-flag-alert-message', flag.label || ''));
+    if (flag.excerpt) card.appendChild(make('span', PREFIX + '-flag-alert-excerpt', flag.excerpt));
+    var close = make('button', PREFIX + '-flag-alert-close', 'Dismiss');
+    close.type = 'button';
+    close.addEventListener('click', function dismiss() {
+      if (card.parentNode) card.parentNode.removeChild(card);
+      flagAlerts = flagAlerts.filter(function keep(other) { return other !== card; });
+    });
+    card.appendChild(close);
+    stack(parent).appendChild(card);
+    flagAlerts.push(card);
+    while (flagAlerts.length > MAX_FLAG_ALERTS) {
+      var oldest = flagAlerts.shift();
+      if (oldest.parentNode) oldest.parentNode.removeChild(oldest);
+    }
+    return card;
+  }
+
+  // ---------------------------------------------------------------- export
+  root.HelmionUI = {
+    PREFIX: PREFIX,
+    MASK_CLASS: MASK_CLASS,
+    CLAIM_CLASS: CLAIM_CLASS,
+    warnBlock: warnBlock,
+    clearWarning: clearWarning,
+    noteUnchecked: noteUnchecked,
+    clearUnchecked: clearUnchecked,
+    noteClaims: noteClaims,
+    clearClaims: clearClaims,
+    showToast: showToast,
+    hideToast: hideToast,
+    showPromptAlert: showPromptAlert,
+    hidePromptAlert: hidePromptAlert,
+    showAskAlert: showAskAlert,
+    showApprovalPill: showApprovalPill,
+    hideApprovalPill: function () { if (pillElement && pillElement._deny) pillElement._deny('dismissed'); },
+    hideAskAlert: hideAskAlert,
+    showFlagAlert: showFlagAlert,
+    hideFlagAlerts: hideFlagAlerts,
+    showBanner: showBanner,
+    hideBanner: hideBanner,
+    showAdvisoryBanner: showAdvisoryBanner,
+    hideAdvisoryBanner: hideAdvisoryBanner,
+  };
+}(typeof globalThis !== 'undefined' ? globalThis : this));

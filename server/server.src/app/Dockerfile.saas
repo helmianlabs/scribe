@@ -1,0 +1,39 @@
+# Helmian Scribe — SaaS-mode image.
+#
+# Unlike the single-mode Dockerfile next to it, this image carries everything a
+# fresh host needs to run the hosted service: the built app, the provisioning
+# script, and the migration files. The entrypoint verifies (or, with
+# PROVISION_ON_BOOT=apply, applies) database provisioning before the server
+# starts; the server then runs its own boot validation (src/saas/validate.ts).
+#
+# BUILD CONTEXT IS THE REPO ROOT (the migrations live there, not in the app dir):
+#   docker build -f server.src/app/Dockerfile.saas -t helmian-scribe-saas .
+# or use docker-compose.saas.yml, which sets this up. See docs/HOSTING.md.
+
+FROM node:22-slim AS build
+WORKDIR /app
+COPY server.src/app/package.json server.src/app/package-lock.json* ./
+RUN npm install --no-audit --no-fund
+COPY server.src/app/tsconfig.json ./
+COPY server.src/app/src ./src
+RUN npm run build
+
+FROM node:22-slim AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+COPY server.src/app/package.json server.src/app/package-lock.json* ./
+RUN npm install --omit=dev --no-audit --no-fund
+COPY --from=build /app/dist ./dist
+# Provisioning script + migrations. The script resolves ../../../migrations
+# from /app/scripts — with the app at /app that clamps to /migrations, which is
+# exactly where the COPY below puts them. validate.ts finds them the same way
+# (MIGRATIONS_DIR is also set explicitly).
+COPY server.src/app/scripts ./scripts
+COPY migrations /migrations
+COPY server.src/app/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x docker-entrypoint.sh && mkdir -p /data
+ENV MIGRATIONS_DIR=/migrations \
+    MAIL_OUTBOX_FILE=/data/outbox.jsonl
+EXPOSE 8080
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
+CMD ["node", "dist/index.js"]

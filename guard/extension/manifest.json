@@ -1,0 +1,58 @@
+{
+  "manifest_version": 3,
+  "name": "Helmian Guard",
+  "version": "0.7.0",
+  "description": "Catches destructive commands, keeps secrets out of AI chats, flags evasive, leaky or harmful replies, and keeps a durable local log of every flag.",
+  "permissions": [
+    "storage",
+    "alarms",
+    "idle"
+  ],
+  "host_permissions": [
+    "https://helmian.cloud/*",
+    "https://door.helmian.cloud/*"
+  ],
+  "background": {
+    "service_worker": "background/worker.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://claude.ai/*",
+        "https://chatgpt.com/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*"
+      ],
+      "js": [
+        "content/prompt-risk.js",
+        "content/sanitize.js",
+        "generated/helmion-injection.content.js",
+        "content/flags.js",
+        "content/extract.js",
+        "content/stream-watch.js",
+        "content/ui.js",
+        "content/nudge.js",
+        "content/guard.js"
+      ],
+      "css": [
+        "content/guard.css"
+      ],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+  "action": {
+    "default_title": "Helmian Guard",
+    "default_popup": "popup/popup.html"
+  },
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
+  ],
+  "optional_permissions": [
+    "notifications",
+    "identity"
+  ]
+}

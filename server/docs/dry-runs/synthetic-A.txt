@@ -1,0 +1,22 @@
+Librarian dry run — A — By project — fixture fixtures/synthetic-sample.jsonl
+items: 30   unsorted: 13 (43.3%)
+  unsorted                       13  43.3%
+  dairyforge-firstuse             3  10%
+  faith-n-light                   3  10%
+  personal                        3  10%
+  forge-tms                       2  6.7%
+  general                         2  6.7%
+  helmian                         2  6.7%
+  caldmere                        1  3.3%
+  shared-memory                   1  3.3%
+top rules:
+  (unsorted)                         13
+  content.project.faith-n-light      3
+  content.project.dairyforge-firstuse 3
+  content.personal                   3
+  content.project.helmian            2
+  shape.code.general                 2
+  tag.shared-memory                  1
+  content.project.forge-tms          1
+  content.notebook.forge-tms         1
+  content.project.caldmere           1

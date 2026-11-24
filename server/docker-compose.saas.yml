@@ -1,0 +1,87 @@
+# Helmian Scribe — SaaS mode, single-host deployment unit. See docs/HOSTING.md.
+#
+#   cp server.src/app/.env.example .env   # fill in the values below
+#   docker compose -f docker-compose.saas.yml up -d --build
+#   curl http://127.0.0.1:8099/healthz
+#
+# The app binds 127.0.0.1:8099 on the host — it is meant to sit behind a
+# reverse proxy that terminates TLS (our own stack: host Caddy →
+# connect.helmian.cloud; see docs/HOSTING.md). For a host with no proxy of
+# its own, add the bundled one:  docker compose -f docker-compose.saas.yml --profile proxy up -d
+#
+# First boot provisions the database (PROVISION_ON_BOOT=apply): roles, the
+# migration chain and verification run inside the app container's entrypoint
+# before the server starts. Later boots re-verify with the same switch left
+# in place (provisioning is idempotent) — or set PROVISION_ON_BOOT=check-only
+# to make any drift a hard stop without applying anything.
+name: helmian-scribe-saas
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: scribe
+      POSTGRES_USER: scribe_owner
+      POSTGRES_PASSWORD: ${DB_OWNER_PASSWORD:-change-me-owner-password}
+    volumes:
+      - scribe-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scribe_owner -d scribe"]
+      interval: 2s
+      retries: 30
+
+  app:
+    build:
+      context: .
+      dockerfile: server.src/app/Dockerfile.saas
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8099:8080"
+    environment:
+      SCRIBE_MODE: saas
+      NODE_ENV: production
+      PORT: "8080"
+      # The exact public origin. Production boot validation refuses localhost,
+      # plain http, or an unset PUBLIC_URL (it would silently default).
+      PUBLIC_URL: ${PUBLIC_URL:-https://connect.helmian.cloud}
+      # The server connects ONLY as memory_app (RLS binds it). The owner URL is
+      # used solely by the entrypoint's provisioning step.
+      DATABASE_URL: postgres://memory_app:${MEMORY_APP_PASSWORD:-change-me-app-password}@db:5432/scribe
+      DATABASE_SSL: disable # the compose-local Postgres has no TLS; hosted Postgres (Neon) wants this unset (= on)
+      PROVISION_DATABASE_URL: postgres://scribe_owner:${DB_OWNER_PASSWORD:-change-me-owner-password}@db:5432/scribe
+      MEMORY_APP_PASSWORD: ${MEMORY_APP_PASSWORD:-change-me-app-password}
+      PROVISION_ON_BOOT: ${PROVISION_ON_BOOT:-apply}
+      # Sign-in email — production boot REFUSES the dev mailer. Set both.
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      # Billing — leave the secret blank to run with billing off (mock mode).
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      STRIPE_PRICE_PRO: ${STRIPE_PRICE_PRO:-}
+      STRIPE_PRICE_TEAM: ${STRIPE_PRICE_TEAM:-}
+    volumes:
+      - scribe-data:/data
+
+  # Optional TLS front door for hosts without their own reverse proxy.
+  # Our production pattern runs Caddy on the host instead (docs/HOSTING.md);
+  # this service is the same shape for a fresh host.
+  proxy:
+    image: caddy:2-alpine
+    profiles: ["proxy"]
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./ops/Caddyfile.saas:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  scribe-db:
+  scribe-data:
+  caddy-data:
+  caddy-config:
