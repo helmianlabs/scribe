@@ -482,7 +482,11 @@ test('neither hook can block a session', async () => {
 
 // ── CLI ──────────────────────────────────────────────────────────────────────
 
-test('the CLI emits machine-readable JSON for the desktop UI', async () => {
+// These two drive the Helmian desk CLI (bin/helmion.mjs), which is part of the
+// Helmian cloud app and is not shipped in Scribe. Skipped here, never deleted.
+const HELMIAN_CLI_SKIP = existsSync(join(repoRoot, 'bin', 'helmion.mjs')) ? false : 'Helmian CLI (bin/helmion.mjs) is not part of Scribe';
+
+test('the CLI emits machine-readable JSON for the desktop UI', { skip: HELMIAN_CLI_SKIP }, async () => {
   const dir = await scratch();
   const { stdout } = await run(process.execPath, [
     join(repoRoot, 'bin', 'helmion.mjs'),
@@ -500,7 +504,7 @@ test('the CLI emits machine-readable JSON for the desktop UI', async () => {
   await rm(dir, { recursive: true, force: true });
 });
 
-test('the CLI rejects an unknown target', async () => {
+test('the CLI rejects an unknown target', { skip: HELMIAN_CLI_SKIP }, async () => {
   await assert.rejects(
     run(process.execPath, [join(repoRoot, 'bin', 'helmion.mjs'), 'agent-os', 'install', '--target', 'nope']),
     /Unknown target "nope"/,
