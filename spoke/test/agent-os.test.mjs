@@ -29,6 +29,8 @@ import {
   loadAgentOsTemplates,
   loadEstateCargo,
   mergeHookSettings,
+  personalNamePattern,
+  personalNamesFromEnv,
   render,
   renderAgentOsFiles,
   renderEstateFiles,
@@ -1496,4 +1498,25 @@ test('D4: the stamp set is exactly the write set', () => {
     AGENT_OS_TARGETS.map((target) => TARGET_PRESENCE_PROVIDERS[target]),
     'the stamps derive from the installer targets, so they cannot drift',
   );
+});
+
+// The personal-name rule is a setting, not a list of real people in source:
+// the neutral default is 'sam', and each owner sets AGENT_OS_PERSONAL_NAMES
+// (comma-separated) on their own machine.
+test('personal-name rule: neutral default, owner list from AGENT_OS_PERSONAL_NAMES', async () => {
+  assert.deepEqual(personalNamesFromEnv({}), ['sam']);
+  assert.deepEqual(personalNamesFromEnv({ AGENT_OS_PERSONAL_NAMES: ' pat, Lee ' }), ['pat', ' Lee']);
+  const pattern = personalNamePattern(personalNamesFromEnv({ AGENT_OS_PERSONAL_NAMES: 'pat,lee' }));
+  assert.match('Ask Lee before deploying.', pattern);
+  assert.match('PAT said so', pattern);
+  assert.doesNotMatch('patio and sleepy', pattern);
+  assert.doesNotMatch('Ask Sam first', pattern);
+  assert.match('Ask Sam first', personalNamePattern());
+  assert.match('a.b said', personalNamePattern(['a.b']));
+  assert.doesNotMatch('axb said', personalNamePattern(['a.b']));
+  assert.match('Ask Sam first', personalNamePattern(['', ' ']), 'an empty list falls back to the default');
+  const moduleUrl = new URL('../src/core/agent-os.mjs', import.meta.url).href;
+  const script = `import(${JSON.stringify(moduleUrl)}).then((m) => { const f = m.scanForIdentifyingContent({ 'a.md': 'Ask Lee first. Ask Sam too.' }).filter((x) => x.rule === 'personal-name'); console.log(JSON.stringify(f.map((x) => x.matched))); });`;
+  const { stdout } = await run(process.execPath, ['--input-type=module', '-e', script], { env: { ...process.env, AGENT_OS_PERSONAL_NAMES: 'lee' } });
+  assert.deepEqual(JSON.parse(stdout.trim()), ['Lee'], 'IDENTIFYING_PATTERNS uses the env list at load');
 });

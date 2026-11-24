@@ -80,6 +80,23 @@ On a machine with neither variable (for example a Linux host), standing-grant
 coverage fails closed and a person decides. Signed action hashes do not
 depend on these paths.
 
+## Owner name settings (no real names in source)
+
+Source uses the neutral stand-in `sam` wherever a person's name used to be.
+Two places act on a name at run time; set these on your own machine so your
+own setup keeps working:
+
+| Setting | Where | Default | What to set |
+|---|---|---|---|
+| `SCRIBE_OWNER_MAILBOX` | memory server (Courier) | `sam` | your Courier mailbox name, so letters already addressed to you keep arriving |
+| `SCRIBE_OWNER_ALIASES` | memory server (Courier) | none (`owner` always works) | other names people use for you, comma-separated |
+| `AGENT_OS_PERSONAL_NAMES` | Spoke (Agent OS template guard) | `sam` | real names that must never ship in templates, comma-separated |
+
+Guard's auto-approver identity is already a setting (`AUTO_APPROVE_PRINCIPAL`,
+default `auto-approve`), and approver identities come from
+`EXEC_GUARD_APPROVER_TOKENS` (`name=token`, see
+`guard/executive-guard/deploy/executive-guard.env.example`).
+
 ## Code signing policy
 
 See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).

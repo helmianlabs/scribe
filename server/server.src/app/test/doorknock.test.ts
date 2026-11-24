@@ -16,6 +16,22 @@ test("mailbox directory: aliases and FOR: X map to canonical names", () => {
   assert.equal(new Set(MAILBOXES.map((m) => m.name)).size, MAILBOXES.length);
 });
 
+test("owner mailbox: neutral default 'sam', 'owner' alias, SCRIBE_OWNER_MAILBOX/ALIASES override", async () => {
+  assert.equal(canonicalMailbox("owner"), process.env.SCRIBE_OWNER_MAILBOX ? canonicalMailbox(process.env.SCRIBE_OWNER_MAILBOX) : "sam");
+  if (!process.env.SCRIBE_OWNER_MAILBOX) {
+    assert.equal(canonicalMailbox("sam"), "sam");
+    assert.equal(mailboxFromCategory("for-sam"), "sam");
+  }
+  const { execFile } = await import("node:child_process");
+  const { promisify } = await import("node:util");
+  const url = new URL("../src/courier/mailboxes.ts", import.meta.url).href;
+  const script = `import(${JSON.stringify(url)}).then((m) => console.log(JSON.stringify([m.canonicalMailbox("owner"), m.canonicalMailbox("pat-h"), m.canonicalMailbox("sam"), m.mailboxFromCategory("for-pat"), m.MAILBOXES[0].legacyTag])));`;
+  const { stdout } = await promisify(execFile)(process.execPath, ["--import", "tsx", "--input-type=module", "-e", script], {
+    env: { ...process.env, SCRIBE_OWNER_MAILBOX: " Pat ", SCRIBE_OWNER_ALIASES: "pat-h, owner ,pat" },
+  });
+  assert.deepEqual(JSON.parse(stdout.trim()), ["pat", "pat", "sam", "pat", "for-pat"]);
+});
+
 test("006 is idempotent: running it twice is a no-op", async () => {
   const pg = await freshDb({ saas: false });
   await pg.exec(sql("006_courier.sql"));
