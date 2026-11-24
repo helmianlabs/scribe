@@ -1,17 +1,17 @@
-# Helmian Spoke
+# Scribe
 
-The Helmian Spoke is a small, open-source program that runs on your Windows PC
+Scribe is a small program that runs on your Windows PC
 and lets the agents you add in [Helmian](https://helmian.cloud) do work on that
 PC, such as building and previewing projects, only inside the folders you allow.
 It pairs once with a short code and then starts each time you sign in.
 
 This repository holds **only the spoke and its Windows installer**, under the
-MIT license. The Helmian cloud app is a separate product and is not part of
+Business Source License 1.1. The Helmian cloud app is a separate product and is not part of
 this repository.
 
 ## Download
 
-Signed releases: see [Releases](https://github.com/helmianlabs/helmian-spoke/releases).
+Signed releases: see [Releases](https://github.com/helmianlabs/Scribe/releases).
 Each release is built from this repository's source in GitHub Actions.
 
 ## What it does
@@ -61,5 +61,5 @@ See [PRIVACY.md](PRIVACY.md).
 
 ## License
 
-MIT. Copyright (c) 2026 DairyForge LLC. Bundled Node.js is under its own
+Business Source License 1.1. Copyright (c) 2026 DairyForge LLC. Bundled Node.js is under its own
 MIT-style license (https://github.com/nodejs/node/blob/main/LICENSE).
