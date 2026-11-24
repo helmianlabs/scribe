@@ -1,5 +1,5 @@
-# Build from the REPO ROOT so the shared routing policy comes along:
-#   docker build -f hands-mcp/Dockerfile -t helmian-hands-mcp .
+# Build from the spoke/ folder of the Scribe repo so the shared routing policy comes along:
+#   docker build -f spoke/hands-mcp/Dockerfile -t helmian-hands-mcp spoke
 FROM node:22-slim
 ENV NODE_ENV=production
 WORKDIR /srv/hands-mcp

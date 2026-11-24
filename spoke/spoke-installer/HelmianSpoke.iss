@@ -2,10 +2,12 @@
 ; One Setup file: installs the spoke, asks the pairing passphrase once on its
 ; own page (used inside the install, never stored), pairs, pins the Executive
 ; Guard key, and sets the spoke to start at sign-in. No Helmian app needed.
-; The workflow stages the spoke tree into .\stage before compiling:
-;   stage\node.exe, stage\bin\hands-spoke.mjs, stage\src\hands\*.mjs,
-;   stage\hands-mcp\src\shared\protocol.mjs, stage\package.json,
-;   stage\install-pair.mjs
+; The workflow stages the spoke tree into .\stage before compiling
+; (scripts/stage-spoke.mjs at the Scribe repo root, plus node.exe):
+;   stage\node.exe, stage\bin\hands-spoke.mjs, stage\src\hands\*.mjs
+;   (no root-grant-signer.mjs), stage\src\core\agent-os.mjs,
+;   stage\templates\agent-os\, stage\hands-mcp\src\shared\protocol.mjs,
+;   stage\package.json, stage\LICENSE, stage\PRIVACY.md, stage\install-pair.mjs
 
 [Setup]
 AppId={{EEE4DDE3-DB3E-453E-B88D-0C9146ECA332}
@@ -22,8 +24,8 @@ Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Helmian Spoke
-LicenseFile=..\LICENSE
-InfoBeforeFile=..\PRIVACY.md
+LicenseFile=..\..\LICENSE
+InfoBeforeFile=..\..\PRIVACY.md
 
 [Files]
 Source: "stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

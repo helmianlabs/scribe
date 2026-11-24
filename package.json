@@ -1,13 +1,23 @@
 {
-  "name": "helmian-spoke",
-  "version": "1.0.7",
-  "description": "Helmian Spoke: the small local agent that pairs a Windows PC with Helmian and runs approved work on it.",
+  "name": "scribe",
+  "version": "1.0.10",
+  "description": "Scribe: one memory every AI you use can read and write, plus hands on your PC. One program: the Spoke (Windows agent + installer) and Hands hub, the Scribe memory server with the Librarian and Courier (Neon/Postgres), the door, and Guard.",
   "type": "module",
-  "license": "MIT",
+  "license": "BUSL-1.1",
   "private": true,
   "engines": { "node": ">=20" },
-  "bin": { "hands-spoke": "./bin/hands-spoke.mjs" },
+  "bin": { "hands-spoke": "./spoke/bin/hands-spoke.mjs" },
   "scripts": {
-    "check": "node --check bin/hands-spoke.mjs && node --check src/hands/hidden-input.mjs && node --check src/hands/pc-spoke.mjs && node --check src/hands/root-grants.mjs && node --check src/hands/provider-cli.mjs && node --check hands-mcp/src/shared/protocol.mjs && node --check spoke-installer/install-pair.mjs"
+    "check": "node scripts/check-spoke.mjs",
+    "stage:spoke": "node scripts/stage-spoke.mjs",
+    "install:all": "npm ci --prefix spoke/hands-mcp && npm ci --prefix server && npm ci --prefix server/server.src/app && npm ci --prefix door",
+    "test:spoke": "node --test spoke/test/*.test.mjs",
+    "test:hub": "cd spoke/hands-mcp && node --test test/*.test.mjs",
+    "test:server": "npm test --prefix server && npm test --prefix server/server.src/app",
+    "test:door": "npm test --prefix door",
+    "test:guard": "node --test guard/executive-guard/test/*.test.mjs guard/extension/test/*.test.mjs",
+    "test": "npm run check && npm run test:spoke && npm run test:hub && npm run test:server && npm run test:door && npm run test:guard",
+    "guard:package:chromium": "node guard/tools/package-guard.mjs --target chromium",
+    "guard:package:firefox": "node guard/tools/package-guard.mjs --target firefox"
   }
 }

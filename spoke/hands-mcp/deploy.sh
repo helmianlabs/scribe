@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Run ON the Hetzner box as root from /opt/helmian-hands-mcp/src (a git archive of the repo).
+# Run ON the Hetzner box as root from /opt/helmian-hands-mcp/src (a git archive of the Scribe repo).
 # Builds the image, (re)starts the container on 127.0.0.1:8090 only, leaves claude-memory-mcp alone.
 set -euo pipefail
 cd /opt/helmian-hands-mcp/src
 TAG="helmian-hands-mcp:$(date +%Y%m%d-%H%M%S)"
-docker build -f hands-mcp/Dockerfile -t "$TAG" .
+docker build -f spoke/hands-mcp/Dockerfile -t "$TAG" spoke
 mkdir -p /opt/helmian-hands-mcp/data && chown 1000:1000 /opt/helmian-hands-mcp/data && chmod 700 /opt/helmian-hands-mcp/data
 docker rm -f helmian-hands-mcp >/dev/null 2>&1 || true
 docker network inspect helmian-net >/dev/null 2>&1 || docker network create helmian-net >/dev/null

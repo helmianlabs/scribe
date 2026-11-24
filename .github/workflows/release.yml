@@ -22,24 +22,19 @@ jobs:
       - name: Stage spoke tree
         shell: pwsh
         run: |
-          $s = 'spoke-installer/stage'
-          New-Item -ItemType Directory -Force "$s/bin","$s/src/hands","$s/hands-mcp/src/shared" | Out-Null
+          node scripts/stage-spoke.mjs
+          $s = 'spoke/spoke-installer/stage'
           Invoke-WebRequest "https://nodejs.org/dist/v$env:NODE_VERSION/win-x64/node.exe" -OutFile "$s/node.exe"
-          Copy-Item bin/hands-spoke.mjs "$s/bin/"
-          Copy-Item src/hands/*.mjs "$s/src/hands/"
-          Copy-Item hands-mcp/src/shared/protocol.mjs "$s/hands-mcp/src/shared/"
-          Copy-Item package.json, LICENSE, PRIVACY.md "$s/"
-          Copy-Item spoke-installer/install-pair.mjs "$s/"
       - name: Compile installer
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" spoke-installer/HelmianSpoke.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" spoke/spoke-installer/HelmianSpoke.iss
       - id: upload
         uses: actions/upload-artifact@v4
         with:
           name: unsigned-installer
-          path: spoke-installer/output/*.exe
+          path: spoke/spoke-installer/output/*.exe
       - name: Sign with SignPath
         if: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' }}
         uses: signpath/github-action-submit-signing-request@v1
@@ -57,4 +52,4 @@ jobs:
         with:
           files: |
             signed/*.exe
-            spoke-installer/output/*.exe
+            spoke/spoke-installer/output/*.exe
