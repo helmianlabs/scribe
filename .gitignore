@@ -1,0 +1,8 @@
+node_modules/
+spoke/spoke-installer/stage/
+spoke/spoke-installer/output/
+guard/artifacts/
+*.env
+.env
+.env.*
+!.env.example
