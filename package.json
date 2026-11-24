@@ -15,7 +15,7 @@
     "test:hub": "cd spoke/hands-mcp && node --test test/*.test.mjs",
     "test:server": "npm test --prefix server && npm test --prefix server/server.src/app",
     "test:door": "npm test --prefix door",
-    "test:guard": "node --test guard/executive-guard/test/*.test.mjs guard/extension/test/*.test.mjs",
+    "test:guard": "cd guard && node --test executive-guard/test/*.test.mjs extension/test/*.test.mjs",
     "test": "npm run check && npm run test:spoke && npm run test:hub && npm run test:server && npm run test:door && npm run test:guard",
     "guard:package:chromium": "node guard/tools/package-guard.mjs --target chromium",
     "guard:package:firefox": "node guard/tools/package-guard.mjs --target firefox"
