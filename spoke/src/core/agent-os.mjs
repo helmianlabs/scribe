@@ -1,0 +1,1245 @@
+// Agent OS — a one-button, anonymized install of the self-improvement loop.
+//
+// The loop is a small set of files plus two hooks: a lean core-rules file, the
+// companion logs it accumulates (lessons, learnings, blockers, wins, session
+// board, memory index), and hook wiring that injects that state at session
+// start and captures each turn at the end.
+//
+// Two boundaries this module never crosses:
+//
+//   1. It does not overwrite user content. Files outside `agent-os/` are
+//      created once and thereafter skipped, with two delimited exceptions:
+//      a context file that already exists gets a delimited block appended,
+//      and on later syncs that block — and only that block — is refreshed
+//      in place, so the seat always runs the current rules; and the hook
+//      entries are merged into the tool's settings file (boundary 2).
+//      Everything outside the markers, and every settings key the merge
+//      does not own, is left byte-for-byte as it was.
+//   2. It edits a settings file only by merging. The hook entries are
+//      merged into the file the tool actually reads — appended under the
+//      events they belong to, never replacing the file — because settings
+//      files carry keys this installer knows nothing about. A settings
+//      file that cannot be parsed as JSON is left untouched, the snippet
+//      is written beside it with manual merge instructions, and the
+//      result reports the hooks as not wired. Where the tool's hook
+//      settings are TOML rather than JSON (Mistral Vibe's hooks.toml),
+//      the merge takes the delimited-section form the context files
+//      already use: the entries live between a pair of comment markers,
+//      that section — and only that section — is refreshed, and a file
+//      whose markers are in a shape this installer cannot prove it owns
+//      is left untouched, exactly as an unparseable JSON file is.
+//
+// The estate cargo (see ESTATE_CARGO below) is the one exception to the
+// "created once" rule, and it stays inside boundary 1: the user's own grown
+// files are copied into the managed folder only, refreshed when they change,
+// and the seat files they were copied from are read, never written.
+//
+// Everything here is pure except `installAgentOs` and `loadEstateCargo`,
+// which are the only functions that touch the filesystem.
+
+import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { dirname, join, posix, relative, resolve, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+
+export const DEFAULT_TEMPLATES_ROOT = resolve(here, '..', '..', 'templates', 'agent-os');
+
+export const AGENT_OS_MARKER_BEGIN = '<!-- BEGIN AGENT OS -->';
+export const AGENT_OS_MARKER_END = '<!-- END AGENT OS -->';
+
+/** Directory the installer owns outright and may rewrite on reinstall. */
+export const MANAGED_DIR = 'agent-os';
+
+export const AGENT_OS_TARGETS = Object.freeze(['claude', 'codex', 'gemini', 'grok', 'qwen', 'mistral']);
+
+/**
+ * The presence-row name each target's seat answers to. A profile sync
+ * stamps exactly these providers — the seats it actually writes files
+ * for — and no others: a provider with no install target (a voice
+ * engine, a seat with no local files) is never stamped "synced" by a
+ * profile sync, because the sync wrote nothing for it.
+ */
+export const TARGET_PRESENCE_PROVIDERS = Object.freeze({
+  claude: 'claude',
+  codex: 'openai',
+  gemini: 'gemini',
+  grok: 'grok',
+  qwen: 'qwen',
+  mistral: 'mistral',
+});
+
+export const PROFILE_SYNC_STAMP_PROVIDERS = Object.freeze(
+  AGENT_OS_TARGETS.map((target) => TARGET_PRESENCE_PROVIDERS[target]),
+);
+
+// Per-tool facts, each from that tool's own documentation:
+//
+//   claude  ~/.claude/CLAUDE.md is the user-scope memory file; Claude Code
+//           reads CLAUDE.md, not AGENTS.md. Imports use @path, resolved
+//           relative to the importing file. Hooks live in settings.json under
+//           "hooks"; turn end is "Stop"; timeout is in SECONDS.
+//           https://code.claude.com/docs/en/memory
+//           https://code.claude.com/docs/en/hooks
+//
+//   codex   AGENTS.md is the convention, with ~/.codex/AGENTS.md as the global
+//           scope; files are concatenated root-down with no import syntax, so
+//           an existing file gets the rules inline. Hooks live in
+//           ~/.codex/hooks.json under "hooks"; turn end is "Stop".
+//           https://learn.chatgpt.com/docs/agent-configuration/agents-md
+//           https://learn.chatgpt.com/docs/hooks
+//
+//   gemini  ~/.gemini/GEMINI.md is the global context file, with @file.md
+//           imports. Hooks live in settings.json under "hooks"; turn end is
+//           "AfterAgent"; timeout is in MILLISECONDS.
+//           https://github.com/google-gemini/gemini-cli/blob/main/docs/cli/gemini-md.md
+//           https://github.com/google-gemini/gemini-cli/blob/main/docs/hooks/reference.md
+//
+//   grok    ~/.grok/AGENTS.md is the GLOBAL rules file, read at session start;
+//           a repo-level or deeper AGENTS.md wins where they disagree. Grok
+//           Build has no file of its own name — it reads the AGENTS.md family
+//           (and CLAUDE.md) — so a "GROK.md" would be a file nothing loads.
+//           Hooks are discovered as individual JSON files under ~/.grok/hooks/,
+//           in the same nested shape Claude Code uses; turn end is "Stop".
+//           https://docs.x.ai/build/features/project-rules
+//           https://github.com/xai-org/grok-build
+//
+//   qwen    ~/.qwen/QWEN.md is the user context file, with @path imports;
+//           Qwen Code also reads AGENTS.md. Hooks live in ~/.qwen/settings.json
+//           under "hooks" in the Claude shape — Qwen ships a migrator for
+//           Claude hook config (`qwen hooks migrate --from-claude`) — with
+//           events including SessionStart and Stop; turn end is "Stop".
+//           https://qwenlm.github.io/qwen-code-docs/en/users/features/hooks/
+//           https://qwenlm.github.io/qwen-code-docs/en/users/configuration/settings/
+//
+//   mistral Mistral Vibe's config home is ~/.vibe (VIBE_HOME). Its rules
+//           file is AGENTS.md — Vibe loads AGENTS.md from trusted folders —
+//           written here into the config home in that form; no @import
+//           syntax is documented for it, so the rules ride inline, like
+//           codex and grok. Its hooks are NOT JSON: they live in
+//           ~/.vibe/hooks.toml as [[hooks]] tables, one `type` per hook
+//           (session_start, post_agent, pre_tool, ...), so there is no
+//           JSON object to merge into — the installer writes a delimited
+//           section of hooks.toml and refreshes only that section
+//           (settingsFormat 'toml-section'). Turn end is "post_agent":
+//           the per-turn hook, the analogue of Gemini's AfterAgent.
+//           https://docs.mistral.ai/vibe/code/cli/hooks
+//           https://docs.mistral.ai/vibe/code/cli/configuration
+export const TARGET_SPECS = Object.freeze({
+  claude: Object.freeze({
+    id: 'claude',
+    label: 'Claude Code',
+    directoryName: '.claude',
+    contextFile: 'CLAUDE.md',
+    settingsFile: 'settings.json',
+    snippetFile: 'settings.hooks.json',
+    contextTemplate: 'targets/claude/CLAUDE.md',
+    snippetTemplate: 'targets/claude/settings.hooks.json',
+    turnEndEvent: 'Stop',
+    appendMode: 'import',
+  }),
+  codex: Object.freeze({
+    id: 'codex',
+    label: 'Codex / ChatGPT',
+    directoryName: '.codex',
+    contextFile: 'AGENTS.md',
+    settingsFile: 'hooks.json',
+    snippetFile: 'hooks.json',
+    contextTemplate: 'targets/codex/AGENTS.md',
+    snippetTemplate: 'targets/codex/hooks.json',
+    turnEndEvent: 'Stop',
+    appendMode: 'inline',
+  }),
+  gemini: Object.freeze({
+    id: 'gemini',
+    label: 'Gemini CLI',
+    directoryName: '.gemini',
+    contextFile: 'GEMINI.md',
+    settingsFile: 'settings.json',
+    snippetFile: 'settings.hooks.json',
+    contextTemplate: 'targets/gemini/GEMINI.md',
+    snippetTemplate: 'targets/gemini/settings.hooks.json',
+    turnEndEvent: 'AfterAgent',
+    appendMode: 'import',
+  }),
+  grok: Object.freeze({
+    id: 'grok',
+    label: 'Grok Build',
+    directoryName: '.grok',
+    contextFile: 'AGENTS.md',
+    // Hooks are read from individual files in ~/.grok/hooks/, so unlike the
+    // other three there is no shared settings file to merge INTO — the snippet
+    // is dropped in under its own name and nothing of the user's is touched.
+    settingsFile: 'hooks/agent-os.json',
+    snippetFile: 'hooks.json',
+    contextTemplate: 'targets/grok/AGENTS.md',
+    snippetTemplate: 'targets/grok/hooks.json',
+    turnEndEvent: 'Stop',
+    // Inline, like codex: Grok reads the AGENTS.md family, and no @import
+    // syntax is documented for it. Pointing at a file it may not follow would
+    // append four lines that silently carry nothing.
+    appendMode: 'inline',
+  }),
+  qwen: Object.freeze({
+    id: 'qwen',
+    label: 'Qwen Code',
+    directoryName: '.qwen',
+    contextFile: 'QWEN.md',
+    settingsFile: 'settings.json',
+    snippetFile: 'settings.hooks.json',
+    contextTemplate: 'targets/qwen/QWEN.md',
+    snippetTemplate: 'targets/qwen/settings.hooks.json',
+    turnEndEvent: 'Stop',
+    appendMode: 'import',
+  }),
+  mistral: Object.freeze({
+    id: 'mistral',
+    label: 'Mistral Vibe',
+    directoryName: '.vibe',
+    contextFile: 'AGENTS.md',
+    // Hooks live in ~/.vibe/hooks.toml as [[hooks]] tables — a TOML file,
+    // not a JSON settings object — so the merge is the delimited-section
+    // form (see mergeTomlHookSection), and the snippet is the section
+    // itself, markers included.
+    settingsFile: 'hooks.toml',
+    snippetFile: 'hooks.toml',
+    contextTemplate: 'targets/mistral/AGENTS.md',
+    snippetTemplate: 'targets/mistral/hooks.toml',
+    turnEndEvent: 'post_agent',
+    // Inline, like codex: no @import syntax is documented for Vibe's
+    // AGENTS.md, so the appended block carries the rules themselves.
+    appendMode: 'inline',
+    settingsFormat: 'toml-section',
+    mergeDocTemplate: 'shared/MERGE_HOOKS_TOML.md',
+  }),
+});
+
+/** Companion logs. User-owned: created once, never rewritten. */
+const COMPANIONS = Object.freeze([
+  ['companions/LESSONS.md', 'LESSONS.md'],
+  ['companions/LEARNINGS.md', 'LEARNINGS.md'],
+  ['companions/BLOCKERS.md', 'BLOCKERS.md'],
+  ['companions/WINS.md', 'WINS.md'],
+  ['companions/SESSION_BOARD.md', 'SESSION_BOARD.md'],
+  ['companions/MEMORY.md', 'memory/MEMORY.md'],
+]);
+
+const PARTIALS = Object.freeze({
+  CORE_RULES: 'core/CORE_RULES.md',
+  LOOP: 'core/LOOP.md',
+  LOOP_SUMMARY: 'core/LOOP_SUMMARY.md',
+  ADVISORY: 'core/ADVISORY.md',
+});
+
+const HOOK_TEMPLATES = Object.freeze([
+  'hooks/session-start-context.mjs',
+  'hooks/stop-capture.mjs',
+]);
+
+// ── Estate cargo ─────────────────────────────────────────────────────────────
+//
+// The templates above are a distilled starter kit: they ship to strangers, so
+// they are anonymized and they carry no one's actual work. The estate is the
+// opposite cargo. It is the user's own grown files, read from the source seat
+// on this machine at install time and copied into every seat's managed
+// folder, refreshed on every sync — so what one seat has learned and written
+// down reaches the others instead of staying stranded in the seat that grew
+// it.
+//
+// The source of truth is the Claude seat: its CLAUDE.md (hand-built, the
+// largest single rules document the user owns) and the flywheel's grown
+// companions — LESSONS.md and LEARNINGS.md, whose template seeds in the other
+// seats are empty frames by comparison.
+//
+// Three properties keep this cargo honest:
+//
+//   - Verbatim. An estate file is a copy, not a render: no trimming, no
+//     placeholder pass, no anonymization scan. The bytes that land are the
+//     bytes that were read, so a sync report's hash for a copy equals the
+//     source's hash, and "unchanged" is a direct comparison.
+//   - Managed only. Copies land under agent-os/estate/ and nowhere else. The
+//     seat's own files — the very files the estate was read from, and every
+//     other seat's own context file and companions — are never the copy's
+//     destination.
+//   - Presence-gated. A seat whose directory does not exist on this machine
+//     is not present here; its estate cargo is skipped and the skip is
+//     recorded in the plan, never silently dropped and never forced into a
+//     folder the sync itself just invented.
+
+/** The seat whose directory holds the estate sources. */
+export const ESTATE_SOURCE_TARGET = 'claude';
+
+export const ESTATE_CARGO = Object.freeze([
+  Object.freeze({ source: 'CLAUDE.md', destination: `${MANAGED_DIR}/estate/CLAUDE-ESTATE.md` }),
+  Object.freeze({ source: 'LESSONS.md', destination: `${MANAGED_DIR}/estate/LESSONS.md` }),
+  Object.freeze({ source: 'LEARNINGS.md', destination: `${MANAGED_DIR}/estate/LEARNINGS.md` }),
+]);
+
+// ── Estate folder cargo (part B1) ────────────────────────────────────────────
+//
+// Two folders of the same estate, carried file by file under the same four
+// properties: the hand-built hook scripts in `scripts/` — the user's own
+// PC-side gates (autonomy boundary, destructive-command block, commit QA,
+// pretask blocker gate, the topic-lessons injector, and the rest of the
+// library) — and the topic lessons library in `lessons/` that the
+// topic-lessons hook injects from. Carriage is all this is: the files land
+// as data in each seat's managed folder; nothing here wires or runs them.
+//
+// Two fences keep the carriage to the estate itself:
+//
+//   - Root files only, never recursive. The subfolders under `scripts/` are
+//     separate tool trees with their own dependency folders, logs and data
+//     files — one of them holds a secret-bearing .env — and none of that is
+//     estate. A seat receives the scripts folder's own files, not everything
+//     that happens to live beneath it.
+//   - An extension allowlist per folder. Backup copies (.bak and friends),
+//     logs and caches sit in these folders beside the living files; the
+//     allowlist names the file kinds that ARE the estate — script files for
+//     `scripts/`, markdown for `lessons/` — and everything else stays home.
+export const ESTATE_SCRIPT_EXTENSIONS = Object.freeze([
+  '.ps1', '.mjs', '.js', '.cjs', '.sh', '.py', '.bat', '.cmd', '.vbs',
+]);
+
+export const ESTATE_CARGO_FOLDERS = Object.freeze([
+  Object.freeze({
+    source: 'scripts',
+    destination: `${MANAGED_DIR}/estate/scripts`,
+    extensions: ESTATE_SCRIPT_EXTENSIONS,
+  }),
+  Object.freeze({
+    source: 'lessons',
+    destination: `${MANAGED_DIR}/estate/lessons`,
+    extensions: Object.freeze(['.md']),
+  }),
+]);
+
+/** True when a folder-root file name is one the folder's cargo carries. */
+function estateFolderFileCarried(folder, name) {
+  const lower = String(name).toLowerCase();
+  return folder.extensions.some((extension) => lower.endsWith(extension));
+}
+
+// ── Estate tree cargo (part B2) ──────────────────────────────────────────────
+//
+// The skills library: the user's rules in executable form, one folder per
+// skill under `skills/` in the Claude seat — a SKILL.md plus whatever
+// supporting files that skill keeps beside it, sometimes one level down.
+// Unlike the folder cargo above this walk is recursive and preserves each
+// file's path relative to the tree root, because a skill IS its folder
+// shape: flattening it would land files whose references point at siblings
+// that are no longer beside them. Carriage is all this is, as with the
+// scripts: the files land as data under agent-os/estate/skills/ in every
+// seat; nothing here installs a skill into a seat's native skills home or
+// runs anything it carries.
+//
+// The fences are exclusions rather than an allowlist — a skill may keep
+// any kind of text beside its SKILL.md, and a kind nobody has used yet
+// should not silently stay home — but five things never ride:
+//
+//   - Secret-bearing names, wherever they appear in the tree: `.env*`,
+//     and any name carrying `key`, `secret`, `token` or `credential`.
+//     The library's one real .env sits inside a skill folder today.
+//   - Dependency and cache directories — node_modules, __pycache__ and
+//     their kin — named at any depth; their contents are machinery, not
+//     estate, and they dwarf the library itself.
+//   - Logs, backups and temp files (.log, .bak, .tmp, .swp).
+//   - Known binary extensions. The estate pipeline carries text verbatim
+//     — bytes in, the same bytes out, hashes equal — and a binary read as
+//     text is not a copy at all, so binaries stay home rather than land
+//     corrupted.
+//   - A single file over ESTATE_TREE_FILE_MAX_BYTES. The largest file in
+//     the library today is ~32 KB; the cap leaves grown skills room and
+//     still stops a stray data file from riding the sync.
+export const ESTATE_TREE_FILE_MAX_BYTES = 256 * 1024;
+
+export const ESTATE_TREE_EXCLUDED_DIRS = Object.freeze([
+  'node_modules', '__pycache__', '.git', '.cache', '.mypy_cache', '.pytest_cache',
+]);
+
+const ESTATE_TREE_BINARY_EXTENSIONS = Object.freeze([
+  '.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.ico', '.tif', '.tiff',
+  '.pdf', '.zip', '.gz', '.tgz', '.bz2', '.xz', '.7z', '.rar', '.tar',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.o', '.a',
+  '.db', '.sqlite', '.sqlite3', '.pyc', '.pyo', '.class',
+  '.woff', '.woff2', '.ttf', '.otf', '.eot',
+  '.mp3', '.mp4', '.mov', '.avi', '.mkv', '.webm',
+]);
+
+const ESTATE_TREE_SECRET_NAME = /^\.env($|\.)|key|secret|token|credential/;
+const ESTATE_TREE_JUNK_NAME = /\.bak($|\.)|\.(log|tmp|swp)$/;
+
+export const ESTATE_CARGO_TREES = Object.freeze([
+  Object.freeze({
+    source: 'skills',
+    destination: `${MANAGED_DIR}/estate/skills`,
+  }),
+]);
+
+/**
+ * True when a file inside an estate tree is one the tree's cargo carries.
+ * `name` is the file's own name (not its path); the directory fences are
+ * applied by the walk itself, which never descends into an excluded
+ * directory. `size` is the file's byte size from stat, checked before the
+ * file is read so an oversized file is never loaded to be rejected.
+ */
+function estateTreeFileCarried(name, size) {
+  const lower = String(name).toLowerCase();
+  if (lower === '.ds_store') return false;
+  if (ESTATE_TREE_SECRET_NAME.test(lower)) return false;
+  if (ESTATE_TREE_JUNK_NAME.test(lower)) return false;
+  if (ESTATE_TREE_BINARY_EXTENSIONS.some((extension) => lower.endsWith(extension))) return false;
+  if (typeof size === 'number' && size > ESTATE_TREE_FILE_MAX_BYTES) return false;
+  return true;
+}
+
+export function resolveTargets(requested) {
+  if (!requested || requested === 'all') return [...AGENT_OS_TARGETS];
+  const names = String(requested)
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  if (names.length === 0) throw new Error('--target requires at least one value');
+  for (const name of names) {
+    if (!AGENT_OS_TARGETS.includes(name)) {
+      throw new Error(
+        `Unknown target "${name}". Valid targets: ${AGENT_OS_TARGETS.join(', ')}, all`,
+      );
+    }
+  }
+  return [...new Set(names)];
+}
+
+export function defaultTargetDirectory(target, home = homedir()) {
+  const spec = TARGET_SPECS[target];
+  if (!spec) throw new Error(`Unknown target "${target}"`);
+  return join(home, spec.directoryName);
+}
+
+/** Recursively list every template file, relative to the templates root. */
+export async function listTemplateFiles(templatesRoot = DEFAULT_TEMPLATES_ROOT) {
+  const found = [];
+  async function walk(dir) {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else if (entry.isFile()) found.push(relative(templatesRoot, full).split(sep).join('/'));
+    }
+  }
+  await walk(templatesRoot);
+  return found.sort();
+}
+
+/** Read every template file into a { relativePath: content } map. */
+export async function loadAgentOsTemplates(templatesRoot = DEFAULT_TEMPLATES_ROOT) {
+  const files = await listTemplateFiles(templatesRoot);
+  const templates = {};
+  await Promise.all(files.map(async (file) => {
+    templates[file] = await readFile(join(templatesRoot, file), 'utf8');
+  }));
+  return templates;
+}
+
+function requireTemplate(templates, key) {
+  const value = templates[key];
+  if (typeof value !== 'string') throw new Error(`Missing template: ${key}`);
+  return value;
+}
+
+/** Substitute {{TOKEN}} placeholders and fail loudly on any left behind. */
+export function render(template, values) {
+  const out = template.replace(/\{\{([A-Z0-9_]+)\}\}/g, (match, token) => {
+    if (!(token in values)) return match;
+    return String(values[token]);
+  });
+  const leftover = out.match(/\{\{[A-Z0-9_]+\}\}/);
+  if (leftover) throw new Error(`Unresolved template placeholder ${leftover[0]}`);
+  return out;
+}
+
+function trimBody(text) {
+  return text.replace(/\s+$/, '');
+}
+
+/**
+ * Build every file for one target.
+ *
+ * Returns entries of { path, content, ownership }, where `path` is relative to
+ * the install directory and ownership is 'managed' (inside agent-os/, may be
+ * refreshed) or 'user' (created once, then left alone).
+ */
+export function renderAgentOsFiles({ target, templates, installDir }) {
+  const spec = TARGET_SPECS[target];
+  if (!spec) throw new Error(`Unknown target "${target}"`);
+
+  const partials = {};
+  for (const [token, path] of Object.entries(PARTIALS)) {
+    partials[token] = trimBody(requireTemplate(templates, path));
+  }
+
+  // Forward slashes work on every platform Node runs on and need no JSON
+  // escaping, which a Windows backslash path would.
+  const hooksDir = posix.join(
+    installDir.split(sep).join('/'),
+    MANAGED_DIR,
+    'hooks',
+  );
+
+  const files = [];
+  const add = (path, content, ownership) => {
+    files.push({ path, content: `${trimBody(content)}\n`, ownership });
+  };
+
+  // The generated context file carries the same markers as an appended block.
+  // Without them a reinstall cannot tell "I wrote this" from "the user wrote
+  // this", and appends the rules a second time.
+  add(
+    spec.contextFile,
+    [
+      AGENT_OS_MARKER_BEGIN,
+      trimBody(render(requireTemplate(templates, spec.contextTemplate), partials)),
+      AGENT_OS_MARKER_END,
+    ].join('\n'),
+    'user',
+  );
+
+  for (const [source, destination] of COMPANIONS) {
+    add(destination, requireTemplate(templates, source), 'user');
+  }
+
+  add(
+    `${MANAGED_DIR}/AGENT_OS.md`,
+    render(requireTemplate(templates, 'shared/AGENT_OS.md'), partials),
+    'managed',
+  );
+
+  add(
+    `${MANAGED_DIR}/${spec.snippetFile}`,
+    render(requireTemplate(templates, spec.snippetTemplate), { HOOKS_DIR: hooksDir }),
+    'managed',
+  );
+
+  // The settings file itself — the merge target (boundary 2). Its rendered
+  // content is the snippet: exactly what the file should hold when it does
+  // not exist yet. planAgentOsInstall treats this path specially: an
+  // existing file is merged, never overwritten.
+  add(
+    spec.settingsFile,
+    render(requireTemplate(templates, spec.snippetTemplate), { HOOKS_DIR: hooksDir }),
+    'settings',
+  );
+
+  add(
+    `${MANAGED_DIR}/MERGE_HOOKS.md`,
+    render(requireTemplate(templates, spec.mergeDocTemplate ?? 'shared/MERGE_HOOKS.md'), {
+      SETTINGS_PATH: posix.join(installDir.split(sep).join('/'), spec.settingsFile),
+      SNIPPET_PATH: posix.join(installDir.split(sep).join('/'), MANAGED_DIR, spec.snippetFile),
+      TURN_END_EVENT: spec.turnEndEvent,
+    }),
+    'managed',
+  );
+
+  for (const hook of HOOK_TEMPLATES) {
+    add(`${MANAGED_DIR}/${hook}`, requireTemplate(templates, hook), 'managed');
+  }
+
+  return files;
+}
+
+/**
+ * The inner text of a rendered context file: its content with the marker
+ * pair stripped. The rendered context file carries its own markers; a
+ * block appended to a user file wraps the body in ONE pair — embedding
+ * the rendered file whole used to nest a second pair inside the first.
+ */
+export function agentOsBlockBody(renderedContext) {
+  const text = trimBody(String(renderedContext ?? ''));
+  const begin = text.indexOf(AGENT_OS_MARKER_BEGIN);
+  const end = text.lastIndexOf(AGENT_OS_MARKER_END);
+  if (begin === -1 || end === -1 || end < begin) return text;
+  // trimBody trims the tail only; the slice starts with the newline that
+  // followed the BEGIN marker, so trim the head too.
+  return trimBody(text.slice(begin + AGENT_OS_MARKER_BEGIN.length, end).replace(/^\s+/, ''));
+}
+
+/**
+ * The body of the delimited block for one target — the exact text a sync
+ * keeps current inside the markers, whether the block was appended to a
+ * user file or the context file was created whole. Import mode points at
+ * the managed file and at the estate imports: the pointer IS the
+ * consumption path, the imports are what the tool actually loads. Inline
+ * mode carries the rules themselves, for a tool with no import syntax.
+ */
+export function appendBlockBodyFor({ target, renderedContext }) {
+  const spec = TARGET_SPECS[target];
+  if (spec.appendMode === 'import') {
+    return [
+      'Agent OS is installed. The core rules, the self-improvement loop, and the',
+      'advisory lane are in the imported file below. Your own grown files — your',
+      'rules document and the flywheel companions, copied from your source seat',
+      'and refreshed on every sync — are imported after it.',
+      '',
+      `@${MANAGED_DIR}/AGENT_OS.md`,
+      `@${MANAGED_DIR}/estate/CLAUDE-ESTATE.md`,
+      `@${MANAGED_DIR}/estate/LESSONS.md`,
+      `@${MANAGED_DIR}/estate/LEARNINGS.md`,
+    ].join('\n');
+  }
+  return agentOsBlockBody(renderedContext);
+}
+
+/**
+ * The block appended to a context file that already exists.
+ *
+ * Import mode points at the managed file, so the user's own file grows by
+ * the pointer block only. Inline mode carries the rules themselves, for a
+ * tool with no import syntax.
+ */
+export function appendBlockFor({ target, renderedContext }) {
+  return [
+    '',
+    AGENT_OS_MARKER_BEGIN,
+    appendBlockBodyFor({ target, renderedContext }),
+    AGENT_OS_MARKER_END,
+    '',
+  ].join('\n');
+}
+
+/**
+ * Build the estate entries for one target from loaded contents.
+ *
+ * `estateContents` maps a destination path to the source file's exact text,
+ * as returned by `loadEstateCargo`. A destination with no string content is
+ * left out entirely — a missing source produces no file, never an empty one.
+ */
+export function renderEstateFiles(estateContents = {}) {
+  const files = [];
+  for (const { destination } of ESTATE_CARGO) {
+    const content = estateContents?.[destination];
+    if (typeof content !== 'string') continue;
+    files.push({ path: destination, content, ownership: 'managed', cargo: 'estate' });
+  }
+  // Folder cargo: every snapshot key under a folder's destination is one
+  // carried file. Sorted, so the plan reads the same on every run.
+  for (const folder of ESTATE_CARGO_FOLDERS) {
+    const prefix = `${folder.destination}/`;
+    const paths = Object.keys(estateContents ?? {})
+      .filter((path) => path.startsWith(prefix))
+      .sort();
+    for (const path of paths) {
+      const content = estateContents[path];
+      if (typeof content !== 'string') continue;
+      files.push({ path, content, ownership: 'managed', cargo: 'estate' });
+    }
+  }
+  // Tree cargo: the same prefix rule — a snapshot key under a tree's
+  // destination is one carried file, its path below the destination
+  // preserving the shape it had below the tree's source.
+  for (const tree of ESTATE_CARGO_TREES) {
+    const prefix = `${tree.destination}/`;
+    const paths = Object.keys(estateContents ?? {})
+      .filter((path) => path.startsWith(prefix))
+      .sort();
+    for (const path of paths) {
+      const content = estateContents[path];
+      if (typeof content !== 'string') continue;
+      files.push({ path, content, ownership: 'managed', cargo: 'estate' });
+    }
+  }
+  return files;
+}
+
+/**
+ * Merge the hook snippet's entries into a settings file's text.
+ *
+ * Pure: returns { ok: true, content, changed } or { ok: false, reason }.
+ * The merge appends each snippet hook group under its event in the
+ * settings file's `hooks` object, skipping any group whose hook command
+ * is already wired there, and preserves every other key and entry. When
+ * nothing needs adding, the original text comes back with changed: false
+ * — the user's own formatting is never rewritten for its own sake. A
+ * settings file that is not a JSON object, or whose `hooks` shape is not
+ * the object-of-arrays every one of these tools reads, is refused, never
+ * guessed at: the caller leaves the file untouched and reports the skip.
+ */
+export function mergeHookSettings(settingsText, snippetText) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const byHand = 'the snippet beside it (MERGE_HOOKS.md) says how to merge by hand';
+  let snippet;
+  try {
+    snippet = JSON.parse(snippetText);
+  } catch {
+    return refuse('the hook snippet is not valid JSON — settings left untouched');
+  }
+  const snippetHooks = snippet?.hooks;
+  if (!snippetHooks || typeof snippetHooks !== 'object' || Array.isArray(snippetHooks)) {
+    return refuse('the hook snippet carries no hooks object — settings left untouched');
+  }
+  let settings;
+  try {
+    settings = JSON.parse(settingsText);
+  } catch {
+    return refuse(`your settings file is not valid JSON — left untouched; ${byHand}`);
+  }
+  if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
+    return refuse(`your settings file is not a JSON object — left untouched; ${byHand}`);
+  }
+  if (settings.hooks !== undefined
+    && (typeof settings.hooks !== 'object' || settings.hooks === null || Array.isArray(settings.hooks))) {
+    return refuse(`the hooks entry in your settings file is not an object — left untouched; ${byHand}`);
+  }
+  for (const event of Object.keys(snippetHooks)) {
+    const existing = settings.hooks?.[event];
+    if (existing !== undefined && !Array.isArray(existing)) {
+      return refuse(`the ${event} hooks in your settings file are not a list — left untouched; ${byHand}`);
+    }
+  }
+
+  const merged = JSON.parse(JSON.stringify(settings));
+  if (merged.hooks === undefined) merged.hooks = {};
+  let added = 0;
+  for (const [event, groups] of Object.entries(snippetHooks)) {
+    if (!Array.isArray(groups)) continue;
+    const existing = Array.isArray(merged.hooks[event]) ? merged.hooks[event] : [];
+    const wiredCommands = new Set();
+    for (const group of existing) {
+      for (const hook of group?.hooks ?? []) {
+        if (typeof hook?.command === 'string') wiredCommands.add(hook.command);
+      }
+    }
+    const additions = groups.filter((group) => !(Array.isArray(group?.hooks)
+      && group.hooks.some((hook) => typeof hook?.command === 'string' && wiredCommands.has(hook.command))));
+    if (additions.length > 0) {
+      merged.hooks[event] = [...existing, ...additions];
+      added += additions.length;
+    }
+  }
+  if (added === 0) return { ok: true, content: settingsText, changed: false };
+  return { ok: true, content: `${JSON.stringify(merged, null, 2)}\n`, changed: true };
+}
+
+export const TOML_HOOK_SECTION_BEGIN = '# BEGIN AGENT OS HOOKS';
+export const TOML_HOOK_SECTION_END = '# END AGENT OS HOOKS';
+
+/** The delimited section inside a TOML snippet: BEGIN line through END line. */
+function tomlHookSectionSpan(text) {
+  const beginCount = text.split(TOML_HOOK_SECTION_BEGIN).length - 1;
+  const endCount = text.split(TOML_HOOK_SECTION_END).length - 1;
+  if (beginCount !== 1 || endCount !== 1) return null;
+  const beginIdx = text.indexOf(TOML_HOOK_SECTION_BEGIN);
+  const endIdx = text.indexOf(TOML_HOOK_SECTION_END);
+  if (endIdx <= beginIdx) return null;
+  return { beginIdx, endIdx: endIdx + TOML_HOOK_SECTION_END.length };
+}
+
+/**
+ * Merge the hook section into a TOML hooks file's text — the form the
+ * merge takes where the tool's hook settings are TOML [[hooks]] tables
+ * (Mistral Vibe's hooks.toml) rather than a JSON object with a `hooks`
+ * key, so mergeHookSettings has nothing to merge into.
+ *
+ * Pure: returns { ok: true, content, changed } or { ok: false, reason },
+ * the same contract as mergeHookSettings. The installer's entries live
+ * between the TOML_HOOK_SECTION_BEGIN / END comment markers:
+ *
+ *   - No markers in the file: the section is appended after the user's
+ *     own content, which survives byte-for-byte as a prefix.
+ *   - Exactly one marker pair: that section — and only that section —
+ *     is refreshed in place; everything outside it is preserved
+ *     byte-for-byte, and an already-current section reports
+ *     changed: false with the original text.
+ *   - Any other marker shape (a BEGIN with no END after it, more than
+ *     one pair): refused, never guessed at — the caller leaves the file
+ *     untouched and reports the skip, exactly as an unparseable JSON
+ *     settings file is refused.
+ */
+export function mergeTomlHookSection(settingsText, snippetText) {
+  const refuse = (reason) => ({ ok: false, reason });
+  const byHand = 'the snippet beside it (MERGE_HOOKS.md) says how to merge by hand';
+  const snippetSpan = tomlHookSectionSpan(snippetText);
+  if (!snippetSpan) {
+    return refuse('the hook snippet carries no delimited section — settings left untouched');
+  }
+  const desired = trimBody(snippetText.slice(snippetSpan.beginIdx, snippetSpan.endIdx));
+
+  const beginCount = settingsText.split(TOML_HOOK_SECTION_BEGIN).length - 1;
+  const endCount = settingsText.split(TOML_HOOK_SECTION_END).length - 1;
+  if (beginCount === 0 && endCount === 0) {
+    const separator = settingsText === '' ? '' : (settingsText.endsWith('\n') ? '\n' : '\n\n');
+    return { ok: true, content: `${settingsText}${separator}${desired}\n`, changed: true };
+  }
+  const span = tomlHookSectionSpan(settingsText);
+  if (!span) {
+    return refuse(`the agent OS hook markers in your hooks file are in a shape this installer cannot refresh safely — left untouched; ${byHand}`);
+  }
+  const current = settingsText.slice(span.beginIdx, span.endIdx);
+  if (current === desired) return { ok: true, content: settingsText, changed: false };
+  return {
+    ok: true,
+    content: `${settingsText.slice(0, span.beginIdx)}${desired}${settingsText.slice(span.endIdx)}`,
+    changed: true,
+  };
+}
+
+/**
+ * Decide what to do with each file, without touching disk.
+ *
+ * `existing` maps a relative path to its current content, or undefined when the
+ * file is absent. Actions:
+ *   create    — no file there, write it
+ *   append    — context file exists without our marker, add a delimited block
+ *   update    — managed file whose content changed, refresh it; also a
+ *               context file whose delimited block is stale (the block, and
+ *               only the block, is replaced with the current rules), and a
+ *               settings file the hook entries were merged into
+ *   unchanged — file already identical, its block already current, or its
+ *               hooks already wired
+ *   skip      — user file already present, leave it exactly as it is; also
+ *               a file whose markers or settings JSON are in a shape this
+ *               installer cannot safely touch
+ */
+export function planAgentOsInstall({ target, files, existing = {} }) {
+  const spec = TARGET_SPECS[target];
+  const actions = [];
+
+  for (const file of files) {
+    const current = existing[file.path];
+
+    if (current === undefined) {
+      actions.push({ ...file, action: 'create', reason: 'not present' });
+      continue;
+    }
+
+    if (file.path === spec.contextFile) {
+      if (!current.includes(AGENT_OS_MARKER_BEGIN)) {
+        actions.push({
+          ...file,
+          action: 'append',
+          reason: 'file exists — appending a delimited block, leaving your content intact',
+          appendText: appendBlockFor({ target, renderedContext: file.content }),
+        });
+        continue;
+      }
+      // A block is already there: refresh it in place, so the seat runs
+      // the CURRENT rules after every sync, not the rules from the sync
+      // that first wrote the block. The block runs from the first BEGIN
+      // marker to the last END marker. One pair is the shape this
+      // installer writes; two nested pairs is the shape an older
+      // installer wrote when it embedded the rendered context file
+      // whole. Anything else — a marker quoted in prose, an END with no
+      // BEGIN after it — is not a shape this installer can prove it
+      // owns, and the file is left untouched.
+      const beginCount = current.split(AGENT_OS_MARKER_BEGIN).length - 1;
+      const endCount = current.split(AGENT_OS_MARKER_END).length - 1;
+      const beginIdx = current.indexOf(AGENT_OS_MARKER_BEGIN);
+      const endIdx = current.lastIndexOf(AGENT_OS_MARKER_END);
+      const secondBeginIdx = current.indexOf(AGENT_OS_MARKER_BEGIN, beginIdx + 1);
+      const firstEndIdx = current.indexOf(AGENT_OS_MARKER_END);
+      const singlePair = beginCount === 1 && endCount === 1;
+      const nestedPair = beginCount === 2 && endCount === 2
+        && secondBeginIdx !== -1 && firstEndIdx > secondBeginIdx;
+      if ((!singlePair && !nestedPair) || endIdx <= beginIdx) {
+        actions.push({
+          ...file,
+          action: 'skip',
+          reason: 'agent OS markers are in a shape this installer cannot refresh safely — left untouched',
+        });
+        continue;
+      }
+      const outsideBlock = `${current.slice(0, beginIdx)}${current.slice(endIdx + AGENT_OS_MARKER_END.length)}`.trim();
+      // A file the installer created whole is refreshed to the current
+      // rendered context; a block appended to a user file is refreshed
+      // to the block body for the target's mode. Either way the seat
+      // ends up running the current rules, and everything outside the
+      // markers is preserved byte-for-byte.
+      const desiredBody = outsideBlock === ''
+        ? agentOsBlockBody(file.content)
+        : appendBlockBodyFor({ target, renderedContext: file.content });
+      const desiredBlock = [AGENT_OS_MARKER_BEGIN, desiredBody, AGENT_OS_MARKER_END].join('\n');
+      const currentBlock = current.slice(beginIdx, endIdx + AGENT_OS_MARKER_END.length);
+      if (currentBlock === desiredBlock) {
+        actions.push({ ...file, action: 'unchanged', reason: 'agent OS block already current' });
+      } else {
+        actions.push({
+          ...file,
+          action: 'update',
+          content: `${current.slice(0, beginIdx)}${desiredBlock}${current.slice(endIdx + AGENT_OS_MARKER_END.length)}`,
+          reason: 'agent OS block refreshed with the current rules — your content outside the block is untouched',
+        });
+      }
+      continue;
+    }
+
+    if (file.path === spec.settingsFile) {
+      if (current === file.content) {
+        actions.push({ ...file, action: 'unchanged', reason: 'hook entries already in place' });
+        continue;
+      }
+      const merged = spec.settingsFormat === 'toml-section'
+        ? mergeTomlHookSection(current, file.content)
+        : mergeHookSettings(current, file.content);
+      if (!merged.ok) {
+        actions.push({ ...file, action: 'skip', reason: merged.reason });
+      } else if (!merged.changed) {
+        actions.push({ ...file, action: 'unchanged', reason: 'hooks already wired into your settings file' });
+      } else {
+        actions.push({
+          ...file,
+          action: 'update',
+          content: merged.content,
+          reason: 'hook entries merged into your settings file — everything else in it is preserved',
+        });
+      }
+      continue;
+    }
+
+    if (file.ownership === 'managed') {
+      actions.push(current === file.content
+        ? { ...file, action: 'unchanged', reason: 'already current' }
+        : { ...file, action: 'update', reason: 'managed file — refreshing' });
+      continue;
+    }
+
+    actions.push({ ...file, action: 'skip', reason: 'yours — left untouched' });
+  }
+
+  return actions;
+}
+
+/**
+ * The estate-shaped contents the installer itself ships: the rendered
+ * context file for the source seat and the companion seeds, exactly as an
+ * install writes them. A source still byte-identical to one of these is the
+ * kit's own paper — a fresh install's context file, a companion seed nobody
+ * has written in yet — not the user's grown estate. Carrying it would feed
+ * the starter kit back to every seat dressed as the user's own work, and
+ * would make a second sync on a fresh machine "discover" an estate the
+ * first sync manufactured.
+ */
+function kitOwnedEstateContents(templates, sourceDir) {
+  const rendered = renderAgentOsFiles({ target: ESTATE_SOURCE_TARGET, templates, installDir: sourceDir });
+  const byPath = new Map(rendered.map((file) => [file.path, file.content]));
+  const owned = {};
+  for (const { source, destination } of ESTATE_CARGO) {
+    const content = byPath.get(source);
+    if (typeof content === 'string') owned[destination] = content;
+  }
+  return owned;
+}
+
+/**
+ * Read the estate sources from the source seat's directory under `home`.
+ *
+ * Returns { contents, missing, missingFolders, missingTrees, kitOwned }:
+ * `contents` maps each estate destination path to the source file's exact
+ * text; `missing` lists the fixed-cargo source names that are not there;
+ * `missingFolders` lists the estate folders that are not there;
+ * `missingTrees` lists the estate trees that are not there; `kitOwned`
+ * lists the sources that exist but are still the installer's own shipped
+ * paper (see above) and so are not estate yet. No absence is an error — a
+ * machine may not have grown a file yet — but each is reported, never
+ * silently treated as an empty file. This is the one read of user content
+ * the installer performs, and it is read-only: the sources are never
+ * written by any code path here.
+ *
+ * Folder cargo reads one level only: the folder's own root files whose
+ * names pass its extension allowlist (see ESTATE_CARGO_FOLDERS). An
+ * existing folder with no carried files contributes nothing and is not
+ * missing. The kit-owned exclusion does not reach folder files: the kit
+ * ships no scripts or lessons, so no folder file can be kit paper.
+ *
+ * Tree cargo reads recursively: every file under the tree whose path
+ * avoids the excluded directories and whose name and size pass its fences
+ * (see ESTATE_CARGO_TREES), keyed by its path relative to the tree root
+ * so the folder shape survives the trip. The kit-owned exclusion does not
+ * reach tree files either: the kit ships no skills.
+ */
+export async function loadEstateCargo({
+  home = homedir(),
+  templates = null,
+  readFileImpl = readFile,
+  readdirImpl = readdir,
+  statImpl = stat,
+} = {}) {
+  const sourceDir = defaultTargetDirectory(ESTATE_SOURCE_TARGET, home);
+  const kitOwnedRefs = templates ? kitOwnedEstateContents(templates, sourceDir) : {};
+  const contents = {};
+  const missing = [];
+  const missingFolders = [];
+  const missingTrees = [];
+  const kitOwned = [];
+  for (const { source, destination } of ESTATE_CARGO) {
+    let content;
+    try {
+      content = await readFileImpl(join(sourceDir, source), 'utf8');
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missing.push(source);
+      continue;
+    }
+    if (kitOwnedRefs[destination] !== undefined && content === kitOwnedRefs[destination]) {
+      kitOwned.push(source);
+      continue;
+    }
+    contents[destination] = content;
+  }
+  for (const folder of ESTATE_CARGO_FOLDERS) {
+    let entries;
+    try {
+      entries = await readdirImpl(join(sourceDir, folder.source), { withFileTypes: true });
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missingFolders.push(folder.source);
+      continue;
+    }
+    const names = entries
+      .filter((entry) => entry.isFile() && estateFolderFileCarried(folder, entry.name))
+      .map((entry) => entry.name)
+      .sort();
+    for (const name of names) {
+      contents[`${folder.destination}/${name}`] = await readFileImpl(
+        join(sourceDir, folder.source, name),
+        'utf8',
+      );
+    }
+  }
+  for (const tree of ESTATE_CARGO_TREES) {
+    const treeRoot = join(sourceDir, tree.source);
+    let rootEntries;
+    try {
+      rootEntries = await readdirImpl(treeRoot, { withFileTypes: true });
+    } catch (err) {
+      if (err?.code !== 'ENOENT') throw err;
+      missingTrees.push(tree.source);
+      continue;
+    }
+    // Collect first, read in sorted order after: the snapshot reads the
+    // same on every run, and a file that vanishes mid-walk surfaces as an
+    // ENOENT there rather than sorting differently here.
+    const carried = [];
+    async function walk(dir, relPrefix, entries) {
+      for (const entry of entries) {
+        if (entry.isDirectory()) {
+          if (ESTATE_TREE_EXCLUDED_DIRS.includes(entry.name.toLowerCase())) continue;
+          const childDir = join(dir, entry.name);
+          const childEntries = await readdirImpl(childDir, { withFileTypes: true });
+          await walk(childDir, `${relPrefix}${entry.name}/`, childEntries);
+        } else if (entry.isFile()) {
+          carried.push({ full: join(dir, entry.name), rel: `${relPrefix}${entry.name}`, name: entry.name });
+        }
+      }
+    }
+    await walk(treeRoot, '', rootEntries);
+    carried.sort((a, b) => (a.rel < b.rel ? -1 : a.rel > b.rel ? 1 : 0));
+    for (const file of carried) {
+      const info = await statImpl(file.full);
+      if (!estateTreeFileCarried(file.name, info.size)) continue;
+      contents[`${tree.destination}/${file.rel}`] = await readFileImpl(file.full, 'utf8');
+    }
+  }
+  return { contents, missing, missingFolders, missingTrees, kitOwned };
+}
+
+/**
+ * Plan, and optionally apply, an install for one target.
+ * With `apply: false` nothing is written — that is the default, so the
+ * destructive-looking step needs an explicit --yes.
+ *
+ * `estateContents` is the estate snapshot to carry (see loadEstateCargo).
+ * Pass a map — including an empty one — to carry exactly that. Left
+ * undefined, the snapshot is loaded from disk — but only for a home install:
+ * an explicit `dir` names a self-contained scratch install, and the estate
+ * is a home-level cargo, so a scratch install carries none unless the caller
+ * hands it over. installAgentOsTargets loads the snapshot once and hands
+ * the same one to every target, so every seat receives the estate as it
+ * stood when the sync began, even if an earlier target's install in the same
+ * run touches the source seat's files.
+ */
+export async function installAgentOs({
+  target,
+  dir,
+  templatesRoot = DEFAULT_TEMPLATES_ROOT,
+  templates = null,
+  apply = false,
+  home = homedir(),
+  estateContents = undefined,
+}) {
+  const spec = TARGET_SPECS[target];
+  if (!spec) throw new Error(`Unknown target "${target}"`);
+
+  const installDir = resolve(dir ?? defaultTargetDirectory(target, home));
+  // Presence is judged before this run writes anything: a seat directory
+  // the sync itself is about to create does not count as the seat being
+  // present on this machine.
+  const seatPresent = existsSync(installDir);
+  const loaded = templates ?? await loadAgentOsTemplates(templatesRoot);
+  const estate = estateContents ?? (dir ? {} : (await loadEstateCargo({ home, templates: loaded })).contents);
+  const files = [
+    ...renderAgentOsFiles({ target, templates: loaded, installDir }),
+    ...renderEstateFiles(estate),
+  ];
+
+  const existing = {};
+  for (const file of files) {
+    const full = join(installDir, file.path);
+    if (existsSync(full)) existing[file.path] = await readFile(full, 'utf8');
+  }
+
+  const planned = planAgentOsInstall({ target, files, existing });
+
+  // The estate is presence-gated: where the seat has no directory on this
+  // machine, its estate entries are recorded as skips instead of writes.
+  // The rest of the cargo installs as it always has.
+  const actions = seatPresent
+    ? planned
+    : planned.map((action) => (action.cargo === 'estate' && (action.action === 'create' || action.action === 'update')
+      ? { ...action, action: 'skip', reason: 'seat not present on this machine — estate cargo skipped' }
+      : action));
+
+  if (apply) {
+    for (const action of actions) {
+      const full = join(installDir, action.path);
+      if (action.action === 'create' || action.action === 'update') {
+        await mkdir(dirname(full), { recursive: true });
+        await writeFile(full, action.content, 'utf8');
+      } else if (action.action === 'append') {
+        await writeFile(full, `${existing[action.path].replace(/\s+$/, '')}\n${action.appendText}`, 'utf8');
+      }
+    }
+  }
+
+  const counts = actions.reduce((acc, action) => {
+    acc[action.action] = (acc[action.action] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  const estateActions = actions.filter((action) => action.cargo === 'estate');
+
+  // hooksWired is the truth about the settings file the tool reads: true
+  // when this run leaves the hook entries in it (created with them,
+  // merged into it, or already there), false when the merge could not
+  // run and the file was left untouched. On a dry run it reports what
+  // applying the plan would leave.
+  const settingsAction = actions.find((action) => action.path === spec.settingsFile);
+  const hooksWired = Boolean(settingsAction) && settingsAction.action !== 'skip';
+
+  return {
+    target: spec.id,
+    label: spec.label,
+    directory: installDir,
+    applied: apply,
+    settingsFile: join(installDir, spec.settingsFile),
+    settingsSnippet: join(installDir, MANAGED_DIR, spec.snippetFile),
+    hooksWired,
+    counts,
+    estate: {
+      carried: estateActions.filter((action) => action.action !== 'skip').length,
+      skipped: estateActions
+        .filter((action) => action.action === 'skip')
+        .map((action) => action.path),
+    },
+    files: actions.map(({ path, action, reason, ownership, cargo }) => ({
+      path, action, reason, ownership, ...(cargo ? { cargo } : {}),
+    })),
+  };
+}
+
+export async function installAgentOsTargets({
+  targets,
+  dir = null,
+  templatesRoot = DEFAULT_TEMPLATES_ROOT,
+  apply = false,
+  home = homedir(),
+  estateContents = undefined,
+}) {
+  const templates = await loadAgentOsTemplates(templatesRoot);
+  // One estate snapshot for the whole run, taken before any target writes:
+  // the seats all receive the estate as it stood when the sync began. As in
+  // installAgentOs, an explicit dir means a scratch install and carries no
+  // estate unless the caller hands a snapshot over.
+  const estate = estateContents ?? (dir ? {} : (await loadEstateCargo({ home, templates })).contents);
+  const results = [];
+  for (const target of targets) {
+    // When an explicit --dir is given for several targets, keep them apart by
+    // giving each its own subdirectory; otherwise they would collide on the
+    // shared companion filenames.
+    const targetDir = dir
+      ? (targets.length > 1 ? join(dir, TARGET_SPECS[target].directoryName) : dir)
+      : defaultTargetDirectory(target, home);
+    results.push(await installAgentOs({
+      target, dir: targetDir, templatesRoot, templates, apply, home, estateContents: estate,
+    }));
+  }
+  return { applied: apply, targets: results };
+}
+
+// ── Anonymization guard ──────────────────────────────────────────────────────
+//
+// These templates ship to strangers. Nothing in them may identify the person
+// whose working practice they were distilled from, name a private project, or
+// carry a path or credential from the machine they were written on.
+//
+// This is a denylist, so it proves the absence of known leaks, not the absence
+// of all leaks. A test drives it against a deliberately poisoned input to
+// confirm it can still fail — a scanner that only ever passes proves nothing.
+
+// Personal names that must never ship. The default is the neutral stand-in
+// 'sam'; set AGENT_OS_PERSONAL_NAMES (comma-separated) on your own machine to
+// the real names to refuse, e.g. AGENT_OS_PERSONAL_NAMES=yourname,yourcolleague.
+export function personalNamesFromEnv(env = process.env) {
+  const raw = String(env.AGENT_OS_PERSONAL_NAMES ?? '').trim();
+  return raw ? raw.split(',') : ['sam'];
+}
+
+export function personalNamePattern(names = personalNamesFromEnv()) {
+  const list = names.map((name) => String(name).trim()).filter(Boolean)
+    .map((name) => name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  return new RegExp(`\\b(${(list.length ? list : ['sam']).join('|')})\\b`, 'i');
+}
+
+export const IDENTIFYING_PATTERNS = Object.freeze([
+  { name: 'personal-name', pattern: personalNamePattern() },
+  { name: 'assistant-persona', pattern: /\b(big[\s-]?sister|big[\s-]?brother|clyde|jarvis|cora)\b/i },
+  { name: 'private-project', pattern: /\b(dairyforge|aimforge|caldmere|gauge[\s-]?sandbox|forge[\s-]?light|modularizer)\b/i },
+  { name: 'customer-name', pattern: /\b(chobani|glanbia|lactalis|dfa|nampa|twin[\s-]?falls|kimberly)\b/i },
+  { name: 'vendor-binding', pattern: /\b(neon|hume|kokoro|meshy|caldmere|supabase)\b/i },
+  { name: 'windows-user-path', pattern: /\b[A-Za-z]:[\\/]{1,2}(users|helmion)\b/i },
+  { name: 'unix-home-path', pattern: /(^|\s)\/(?:home|users)\/[a-z][\w.-]*/i },
+  { name: 'email-address', pattern: /[\w.+-]+@[\w-]+\.[a-z]{2,}/i },
+  { name: 'neon-endpoint-id', pattern: /\bep-[a-z]+-[a-z]+-[a-z0-9]+\b/i },
+  { name: 'connection-string', pattern: /\b(?:postgres|postgresql|mysql|mongodb)(?:\+\w+)?:\/\/\S+/i },
+  { name: 'api-key', pattern: /\b(?:sk-[A-Za-z0-9_-]{12,}|sk-ant-\S+|xai-[A-Za-z0-9]{12,}|AIza[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{20,})/ },
+  { name: 'voice-persona-rule', pattern: /\b(speak\.ps1|voice_preference|edge[\s-]?tts|en-US-\w+Neural)\b/i },
+  { name: 'machine-local-file', pattern: /\b(BASE_RULES\.md|MEMORY\.md\s+is\s+a\s+budget|bigsister\w*)\b/i },
+]);
+
+/**
+ * Scan a { path: content } map for identifying content.
+ * Returns one finding per match: { path, rule, line, excerpt }.
+ */
+export function scanForIdentifyingContent(fileMap) {
+  const findings = [];
+  for (const [path, content] of Object.entries(fileMap)) {
+    const lines = String(content).split(/\r?\n/);
+    lines.forEach((line, index) => {
+      for (const { name, pattern } of IDENTIFYING_PATTERNS) {
+        const match = line.match(pattern);
+        if (!match) continue;
+        findings.push({
+          path,
+          rule: name,
+          line: index + 1,
+          excerpt: line.trim().slice(0, 160),
+          matched: match[0],
+        });
+      }
+    });
+  }
+  return findings;
+}
+
+export async function scanTemplatesForIdentifyingContent(templatesRoot = DEFAULT_TEMPLATES_ROOT) {
+  return scanForIdentifyingContent(await loadAgentOsTemplates(templatesRoot));
+}

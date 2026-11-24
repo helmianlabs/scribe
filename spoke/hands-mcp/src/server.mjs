@@ -1,0 +1,183 @@
+// Express app: OAuth 2.1 AS (DCR + PKCE + passphrase consent) + MCP resource
+// server over Streamable HTTP + the outbound-only PC spoke channel.
+// Same shape as claude-memory-mcp on this box.
+
+import { createHash, timingSafeEqual } from 'node:crypto';
+import express from 'express';
+import { z } from 'zod';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { mcpAuthRouter, getOAuthProtectedResourceMetadataUrl } from '@modelcontextprotocol/sdk/server/auth/router.js';
+import { requireBearerAuth } from '@modelcontextprotocol/sdk/server/auth/middleware/bearerAuth.js';
+import { renderConsentPage } from './consent.mjs';
+import { PHONE_ACT_COMMANDS, PHONE_COMMANDS, PHONE_READ_COMMANDS, POWERSHELL_COMMANDS, TOOLS } from './shared/protocol.mjs';
+
+function safeEqual(a, b) {
+  const x = createHash('sha256').update(String(a)).digest();
+  const y = createHash('sha256').update(String(b)).digest();
+  return timingSafeEqual(x, y);
+}
+
+// Combine the HTTP-disconnect signal with the MCP request's own abort signal
+// (whichever fires first). Used only to stop a held-open call waiting on a
+// Guard decision whose caller has gone away; the pending action itself is
+// never cancelled by a disconnect and stays resumable via resume_action.
+function pickSignal(...signals) {
+  const live = signals.filter((s) => s && typeof s.addEventListener === 'function');
+  if (!live.length) return undefined;
+  if (live.length === 1) return live[0];
+  try { return AbortSignal.any(live); } catch { return live[0]; }
+}
+
+export const WRITE_FILE_ANNOTATIONS = Object.freeze({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
+
+export function buildMcpServer(hands, auth, hooks = {}) {
+  const server = new McpServer({ name: 'helmian-hands', version: '0.1.0' });
+  const ro = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
+  const act = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
+  // Saving a text file is local (not open-world). Marking it open-world +
+  // destructive made ChatGPT's safety layer treat a draft-page save like a
+  // risky internet action.
+  const save = WRITE_FILE_ANNOTATIONS;
+  // Optional caller targeting (bite 2b): name a connected device (hands_status
+  // lists them under "devices") to run this call there instead of on the PC.
+  const DEVICE_ARG = ' Optional argument "device": run on that connected device instead of the PC (see hands_status). Optional "mailbox": your Scribe mailbox name (e.g. "claude.ai", "gemini"); if a human approval is still pending when this call returns, the result is mailed there once approved.';
+  const deviceSchema = { device: z.string().optional(), mailbox: z.string().optional() };
+  server.registerTool('hands_status', { description: 'Is the PC online, are hands on, and is Executive Guard live? Read-only.', inputSchema: {}, annotations: ro },
+    async () => ({ content: [{ type: 'text', text: JSON.stringify(hands.status(), null, 2) }] }));
+  server.registerTool('list_files', { description: TOOLS.list_files.description + DEVICE_ARG, inputSchema: { path: z.string(), glob: z.string().optional(), ...deviceSchema }, annotations: ro },
+    (args, extra) => hands.call('list_files', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('read_file', { description: TOOLS.read_file.description + DEVICE_ARG, inputSchema: { path: z.string(), maxBytes: z.number().int().optional(), ...deviceSchema }, annotations: ro },
+    (args, extra) => hands.call('read_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('search_files', { description: TOOLS.search_files.description + DEVICE_ARG, inputSchema: { path: z.string(), query: z.string().optional(), glob: z.string().optional(), maxResults: z.number().int().optional(), ...deviceSchema }, annotations: ro },
+    (args, extra) => hands.call('search_files', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('ollama_generate', { description: TOOLS.ollama_generate.description + DEVICE_ARG, inputSchema: { model: z.string(), prompt: z.string(), ...deviceSchema }, annotations: ro },
+    (args, extra) => hands.call('ollama_generate', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('run_powershell', {
+    description: `${TOOLS.run_powershell.description} Commands: ${Object.entries(POWERSHELL_COMMANDS).map(([id, s]) => `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`).join('; ')}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum(Object.keys(POWERSHELL_COMMANDS)), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
+  }, (args, extra) => hands.call('run_powershell', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  const phoneList = (ids) => ids.map((id) => { const s = PHONE_COMMANDS[id]; return `${id} (${s.summary}${Object.keys(s.args).length ? `; args: ${Object.keys(s.args).join(', ')}` : ''})`; }).join('; ');
+  server.registerTool('phone_look', {
+    description: `${TOOLS.phone_look.description} Commands: ${phoneList(PHONE_READ_COMMANDS)}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum([...PHONE_READ_COMMANDS]), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: ro,
+  }, (args, extra) => hands.call('phone_look', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('run_phone', {
+    description: `${TOOLS.run_phone.description} Commands: ${phoneList(PHONE_ACT_COMMANDS)}.${DEVICE_ARG}`,
+    inputSchema: { commandId: z.enum([...PHONE_ACT_COMMANDS]), args: z.record(z.any()).optional(), ...deviceSchema }, annotations: act,
+  }, (args, extra) => hands.call('run_phone', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('open_url', { description: TOOLS.open_url.description + DEVICE_ARG, inputSchema: { url: z.string(), ...deviceSchema }, annotations: act },
+    (args, extra) => hands.call('open_url', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('write_file', { description: TOOLS.write_file.description + DEVICE_ARG, inputSchema: { path: z.string().describe('Folder and file name inside an allowed workspace root'), content: z.string().describe('Plain text to save, e.g. a draft page or notes'), ...deviceSchema }, annotations: save },
+    (args, extra) => hands.call('write_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('move_file', { description: TOOLS.move_file.description + DEVICE_ARG, inputSchema: { path: z.string(), destination: z.string(), ...deviceSchema }, annotations: act },
+    (args, extra) => hands.call('move_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('copy_file', { description: TOOLS.copy_file.description + DEVICE_ARG, inputSchema: { path: z.string(), destination: z.string(), ...deviceSchema }, annotations: act },
+    (args, extra) => hands.call('copy_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('delete_file', { description: TOOLS.delete_file.description + DEVICE_ARG, inputSchema: { path: z.string(), recursive: z.boolean().optional(), ...deviceSchema }, annotations: act },
+    (args, extra) => hands.call('delete_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('make_dir', { description: TOOLS.make_dir.description + DEVICE_ARG, inputSchema: { path: z.string(), ...deviceSchema }, annotations: act },
+    (args, extra) => hands.call('make_dir', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('edit_file', { description: TOOLS.edit_file.description + DEVICE_ARG, inputSchema: { path: z.string(), find: z.string(), replace: z.string(), all: z.boolean().optional(), ...deviceSchema }, annotations: act },
+    (args, extra) => hands.call('edit_file', args, auth, { signal: pickSignal(hooks.signal, extra?.signal) }));
+  server.registerTool('resume_action', { description: 'Run a mutating action that was waiting for a Guard approval, once a human approved it.', inputSchema: { requestId: z.string() }, annotations: act },
+    ({ requestId }) => hands.resume(requestId, auth));
+  return server;
+}
+
+export function createApp({ config, oauth, hands, hub, spokeTokens }) {
+  const app = express();
+  app.disable('x-powered-by');
+  app.set('trust proxy', 1);
+  const ISSUER = new URL(config.publicUrl);
+  const RESOURCE_URL = new URL(`${config.publicUrl}${config.mcpPath}`);
+  const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(RESOURCE_URL);
+
+  app.get('/', (_req, res) => res.json({
+    name: 'helmian-hands-mcp', status: 'ok', mcp_endpoint: RESOURCE_URL.toString(), transport: 'streamable-http', auth: 'oauth2.1+pkce+dcr',
+    hands: hands.status().handsEnabled ? 'on' : 'off', guard: hands.status().guardLive ? 'live' : 'not live (mutating tools denied)',
+  }));
+  app.get('/healthz', (_req, res) => res.status(200).send('ok'));
+
+  app.use(mcpAuthRouter({ provider: oauth.provider, issuerUrl: ISSUER, baseUrl: ISSUER, resourceServerUrl: RESOURCE_URL, resourceName: 'Helmian hands', scopesSupported: ['hands.read', 'hands.act'] }));
+
+  app.post('/consent', express.urlencoded({ extended: false }), (req, res) => {
+    const pendingId = String(req.body?.pending_id || '');
+    const action = String(req.body?.action || '');
+    const pending = oauth.getPending(pendingId);
+    if (!pending) return res.status(400).send('This authorization request has expired or is invalid. Please retry from your AI client.');
+    if (action === 'deny') return res.redirect(302, oauth.deny(pendingId));
+    const check = spokeTokens.checkPassphrase(String(req.body?.passphrase || ''));
+    if (!check.ok) {
+      return res.status(check.status).set('Content-Type', 'text/html; charset=utf-8')
+        .send(renderConsentPage({ pendingId, clientName: oauth.clientName(pending.clientId), error: check.status === 429 ? check.error : 'Incorrect passphrase. Please try again.', scopes: pending.scopes }));
+    }
+    const url = oauth.approve(pendingId);
+    if (!url) return res.status(400).send('This authorization request has expired.');
+    return res.redirect(302, url);
+  });
+
+  const bearer = requireBearerAuth({ verifier: oauth.provider, resourceMetadataUrl });
+  app.post(config.mcpPath, bearer, express.json({ limit: '256kb' }), async (req, res) => {
+    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    const disconnect = new AbortController();
+    const server = buildMcpServer(hands, req.auth || {}, { signal: disconnect.signal });
+    res.on('close', () => { disconnect.abort(); transport.close(); server.close(); });
+    try {
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch {
+      // A caller that hung up mid-call (e.g. during a held-open Guard wait) must
+      // not turn into a write-after-destroy error here.
+      try { if (!res.headersSent && !res.writableEnded && !res.destroyed) res.status(500).json({ jsonrpc: '2.0', error: { code: -32603, message: 'Internal server error' }, id: null }); } catch { /* socket already gone */ }
+    }
+  });
+  app.get(config.mcpPath, bearer, (_req, res) => res.status(405).json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed. Use POST.' }, id: null }));
+  app.delete(config.mcpPath, bearer, (_req, res) => res.status(405).end());
+
+  // ─── PC spoke channel (outbound from the PC; bearer SPOKE_TOKEN) ───────────
+  const spokeAuth = (req, res, next) => {
+    const m = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ''));
+    const deviceId = m ? spokeTokens.verify(m[1]) : null;
+    if (!deviceId) return res.status(401).json({ error: 'unauthorized' });
+    req.spokeDevice = deviceId;
+    return next();
+  };
+  app.post('/spoke/v1/pair', express.json({ limit: '4kb' }), (req, res) => {
+    const r = spokeTokens.pair({ passphrase: String(req.body?.passphrase || ''), pairCode: req.body?.pairCode ? String(req.body.pairCode) : undefined, deviceId: req.body?.deviceId });
+    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    return res.json({ token: r.token, deviceId: r.deviceId });
+  });
+  // Mint a 10-minute, single-use pairing code. Only the Helmian web app (holding
+  // PAIR_CODE_ISSUER_TOKEN, after checking the signed-in owner) may call this.
+  // Unset token = endpoint off (404), so nothing changes until the operator opts in.
+  app.post('/spoke/v1/pair-code', (req, res) => {
+    const issuer = config.pairCodeIssuerToken;
+    if (!issuer || typeof spokeTokens.issuePairCode !== 'function') return res.status(404).json({ error: 'not_enabled' });
+    const m = /^Bearer\s+(\S+)$/i.exec(String(req.headers.authorization || ''));
+    const a = createHash('sha256').update(m ? m[1] : '').digest();
+    const b = createHash('sha256').update(issuer).digest();
+    if (!m || !timingSafeEqual(a, b)) return res.status(401).json({ error: 'unauthorized' });
+    const r = spokeTokens.issuePairCode();
+    if (!r.ok) return res.status(r.status).json({ error: r.error });
+    return res.json({ code: r.code, expiresAt: r.expiresAt });
+  });
+  app.post('/spoke/v1/poll', spokeAuth, express.json({ limit: '16kb' }), async (req, res) => {
+    const ctrl = new AbortController();
+    res.on('close', () => ctrl.abort());
+    const job = await hub.nextJob({ deviceId: req.spokeDevice, capabilities: req.body?.capabilities, scope: req.body?.scope, signal: ctrl.signal });
+    if (res.writableEnded || res.destroyed) {
+      if (job) hub.requeue(job); // the spoke went away; the job returns to its own device's queue
+      return;
+    }
+    res.json({ job });
+  });
+  app.post('/spoke/v1/result', spokeAuth, express.json({ limit: '256kb' }), (req, res) => {
+    // Device binding: only the device the job was created for may report its
+    // result; a result from any other device is refused (404, as if unknown).
+    const ok = hub.complete(String(req.body?.jobId || ''), { ok: req.body?.ok === true, output: req.body?.output, error: req.body?.error, execution: req.body?.execution }, { deviceId: req.spokeDevice });
+    res.status(ok ? 200 : 404).json({ accepted: ok });
+  });
+
+  return app;
+}
