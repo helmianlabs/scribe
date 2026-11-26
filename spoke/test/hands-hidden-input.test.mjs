@@ -52,6 +52,6 @@ test('piped (non-TTY) input reads one line and echoes nothing', async () => {
 
 test('hands-spoke pair uses readHidden, not the readline output override', async () => {
   const src = await readFile(new URL('../bin/hands-spoke.mjs', import.meta.url), 'utf8');
-  assert.match(src, /readHidden\('Pairing code from helmian\.cloud \(or hands passphrase\): '\)/);
+  assert.match(src, /readHidden\('Scribe passphrase \(or pairing code\): '\)/);
   assert.doesNotMatch(src, /_writeToOutput/);
 });
