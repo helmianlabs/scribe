@@ -1,18 +1,8 @@
-# Helmian Spoke — standalone installer
+# Scribe — standalone installer
 
-The spoke is a separate download from Helmian (Sam's design law): nobody
-should have to install the Helmian app to run a spoke on a PC.
+The PC program is a separate download; nobody needs any other app to run it.
 
-- `HelmianSpoke.iss` — Inno Setup script for the one-file customer install
-  (`Helmian-Spoke-Setup-<version>-win-x64.exe`). It installs the spoke,
-  asks the pairing passphrase once on its own page (used inside the
-  install, never stored), and sets the spoke to start at sign-in.
-- `install-pair.mjs` — the hidden helper the installer runs after copying
-  files: pairs the PC, pins the Executive Guard public key, registers the
-  sign-in task, starts the spoke, and writes the status file the
-  installer's last page reads.
+- `Scribe.iss` — Inno Setup script for the one-file install (`Scribe-Setup-<version>-win-x64.exe`). It installs the program, asks the Scribe passphrase once on its own page (used inside the install and never stored), and sets the program to start at sign-in.
+- `install-pair.mjs` — the hidden helper the installer runs after copying files: pairs the PC, pins the Scribe Guard public key, registers the sign-in task, starts the program, and writes the status file the installer's last page reads.
 
-The release workflow (`.github/workflows/release.yml`) stages the
-spoke tree into `stage/` (bundled `node.exe` v24.22.1 LTS, `bin/`,
-`src/hands/`, `hands-mcp/src/shared/`, this folder's `install-pair.mjs`),
-compiles the installer, and publishes it as its own GitHub release.
+The release workflow (`.github/workflows/release.yml`) stages the spoke tree into `stage/` (bundled `node.exe` v24.22.1 LTS, `bin/`, `src/hands/`, `hands-mcp/src/shared/`, this folder's `install-pair.mjs`), compiles the installer, and publishes it as its own GitHub release.
