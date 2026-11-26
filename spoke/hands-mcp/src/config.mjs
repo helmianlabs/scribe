@@ -1,4 +1,4 @@
-// Configuration from the environment. Secrets live in /opt/helmian-hands-mcp/app.env
+// Configuration from the environment. Secrets live in the hub's app.env on the server.
 // (chmod 600) on the Hetzner box, never in git and never in Vercel.
 //
 // No provider API keys here (019 contract): this server only routes and gates.
