@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Stage the one Scribe Windows download: the tree HelmianSpoke.iss packs.
+// Stage the one Scribe Windows download: the tree Scribe.iss packs.
 //   spoke/spoke-installer/stage/
 //     node.exe                         (added by the release workflow)
 //     bin/hands-spoke.mjs
