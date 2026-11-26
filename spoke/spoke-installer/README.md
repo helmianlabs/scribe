@@ -12,7 +12,7 @@ should have to install the Helmian app to run a spoke on a PC.
   sign-in task, starts the spoke, and writes the status file the
   installer's last page reads.
 
-The release workflow (`.github/workflows/spoke-release.yml`) stages the
+The release workflow (`.github/workflows/release.yml`) stages the
 spoke tree into `stage/` (bundled `node.exe` v24.22.1 LTS, `bin/`,
 `src/hands/`, `hands-mcp/src/shared/`, this folder's `install-pair.mjs`),
 compiles the installer, and publishes it as its own GitHub release.
