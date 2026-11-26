@@ -1,4 +1,4 @@
-// PC-side storage for Helmian hands workspace root grants.
+// PC-side storage for Scribe hands workspace root grants.
 //
 // The default workspace roots in hands-spoke.json are the PC's built-in,
 // mutable roots. A root grant adds ONE more folder, read-only, and only after
@@ -30,12 +30,10 @@ import { dirname, join, resolve } from 'node:path';
 import { homedir, platform } from 'node:os';
 import { isAbsoluteRootPath, rootGrantActionHash, verifyRootGrant } from '../../hands-mcp/src/shared/protocol.mjs';
 
-// The Helmian config directory — the same folder defaultConfigPath() in
-// pc-spoke.mjs points into (kept as a tiny local mirror so this module has no
-// import cycle with the spoke).
+// The Scribe config directory — the same folder defaultConfigPath() in pc-spoke.mjs uses
 function defaultGrantsDir() {
   const base = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
-  return join(base, 'Helmian');
+  return join(base, 'Scribe');
 }
 
 export function defaultRootGrantsPath() {
