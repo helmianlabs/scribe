@@ -11,6 +11,14 @@ your Scribe passphrase. It does not need an account with any other product.
 This repository holds **all of Scribe** — the PC program, the memory server,
 the door and the Guard — under the Business Source License 1.1 (see LICENSE).
 
+## Screenshots
+
+The Scribe site, where an AI connects in one paste:
+
+![Scribe landing page: one memory every AI you work with can share](https://scribe.helmian.cloud/images/scribe-landing.png)
+
+![Connect your AI to Scribe in one paste, with the steps for each app](https://scribe.helmian.cloud/images/scribe-connect.png)
+
 ## What's in this repository
 
 | Folder | What it is |
