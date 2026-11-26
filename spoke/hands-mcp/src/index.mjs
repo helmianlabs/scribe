@@ -28,5 +28,5 @@ const hands = createHands({ config, guard, hub, audit, mailer, mailboxFor: (clie
 const spokeTokens = createSpokeTokens({ file: `${config.stateDir}/spoke-tokens.json`, passphrase: config.passphrase, staticToken: config.spokeToken });
 const app = createApp({ config, oauth, hands, hub, spokeTokens });
 app.listen(config.port, () => {
-  console.error(`helmian-hands-mcp on :${config.port} public=${config.publicUrl} hands=${config.handsEnabled ? 'on' : 'off'} guard=${guard.live ? 'live' : 'NOT LIVE (mutating denied)'} mailback=${mailer ? 'on' : 'off'}`);
+  console.error(`scribe-hands-mcp on :${config.port} public=${config.publicUrl} hands=${config.handsEnabled ? 'on' : 'off'} guard=${guard.live ? 'live' : 'NOT LIVE (mutating denied)'} mailback=${mailer ? 'on' : 'off'}`);
 });
