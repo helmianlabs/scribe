@@ -1,7 +1,7 @@
 {
   "name": "scribe-spoke",
-  "version": "1.0.10",
-  "description": "Scribe Spoke: the local agent that pairs a Windows PC with the Hands hub and runs Guard-approved work on it (files, PowerShell, local LLMs, provider CLIs).",
+  "version": "1.1.0",
+  "description": "Scribe: the local program that pairs a Windows PC with the hands hub and runs Guard-approved work on it (files, PowerShell, local LLMs, provider CLIs).",
   "type": "module",
   "license": "BUSL-1.1",
   "private": true,
