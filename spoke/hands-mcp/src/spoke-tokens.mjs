@@ -19,7 +19,7 @@ const MAX_DEVICES = 32;
 const LOCK_AFTER = 5;
 const LOCK_MS = 15 * 60 * 1000;
 // Short-lived pairing codes ("Set up this PC" in the web app). A code is
-// minted only by a caller holding the operator's issuer token (the Helmian
+// minted only by a caller holding the operator's issuer token (the operator
 // web app, after it has checked the signed-in owner/admin), lives 10 minutes,
 // works once, and only its digest is kept (in memory — a restart voids codes).
 export const PAIR_CODE_TTL_MS = 10 * 60 * 1000;
@@ -79,7 +79,7 @@ export function createSpokeTokens({ file, passphrase, staticToken = null, now = 
     codes = codes.filter((c) => c.expiresAt > t);
     const presented = digest(normalizePairCode(given));
     const hit = codes.find((c) => timingSafeEqual(Buffer.from(c.hash, 'hex'), presented));
-    if (!hit) { failures.push(t); return { ok: false, status: 401, error: 'That pairing code is wrong or expired. Make a new one in Helmian (Settings, Set up this PC).' }; }
+    if (!hit) { failures.push(t); return { ok: false, status: 401, error: 'That pairing code is wrong or expired. Try again with a fresh code, or pair with your Scribe passphrase.' }; }
     codes = codes.filter((c) => c !== hit);
     return { ok: true };
   }
