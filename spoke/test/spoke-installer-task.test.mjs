@@ -20,9 +20,9 @@ test('task script runs the spoke hidden, restarts on failure, no time limit, sta
 });
 
 test('schtasks fallback keeps the quotes and runs as the signed-in user, hidden', () => {
-  const a = schtasksCreateArgs('C:\\Users\\t\\AppData\\Local\\Programs\\HelmianSpoke', env);
+  const a = schtasksCreateArgs('C:\\Users\\t\\AppData\\Local\\Programs\\Scribe', env);
   assert.match(a, /\/RU "PC\\sam" \/IT/);
-  assert.match(a, /\/TR "C:\\Windows\\System32\\conhost\.exe --headless \\"C:\\Users\\t\\AppData\\Local\\Programs\\HelmianSpoke\\node\.exe\\" \\".*hands-spoke\.mjs\\""$/);
+  assert.match(a, /\/TR "C:\\Windows\\System32\\conhost\.exe --headless \\"C:\\Users\\t\\AppData\\Local\\Programs\\Scribe\\node\.exe\\" \\".*hands-spoke\.mjs\\""$/);
 });
 
 test('PowerShell path is used first; its success is reported', () => {
