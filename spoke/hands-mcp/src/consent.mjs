@@ -8,15 +8,15 @@ function escapeHtml(s) {
 export function renderConsentPage({ pendingId, clientName, error, scopes = [] }) {
   const wantsAct = scopes.includes('hands.act');
   const sub = wantsAct
-    ? 'An application is asking to use Helmian hands on your PC: read files in your workspace, ask local Ollama, and REQUEST actions (PowerShell, opening pages, writing files). Every action still needs a separate Executive Guard approval; nothing runs on approval of this page alone.'
-    : 'An application is asking for read-only Helmian hands on your PC: list and read files in your workspace roots and ask local Ollama. It cannot change anything.';
+    ? 'An application is asking to use Scribe hands on your PC: read files in your workspace, ask local Ollama, and REQUEST actions (PowerShell, opening pages, writing files). Every action still needs a separate Scribe Guard approval; nothing runs on approval of this page alone.'
+    : 'An application is asking for read-only Scribe hands on your PC: list and read files in your workspace roots and ask local Ollama. It cannot change anything.';
   const errorBlock = error ? `<p class="error">${escapeHtml(error)}</p>` : '';
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Authorize Helmian hands</title>
+<title>Authorize Scribe hands</title>
 <style>
   :root { color-scheme: light dark; }
   body { font-family: -apple-system, Segoe UI, Roboto, sans-serif; background:#0b0d10; color:#e9eef3;
@@ -39,7 +39,7 @@ export function renderConsentPage({ pendingId, clientName, error, scopes = [] })
 </head>
 <body>
   <div class="card">
-    <h1>Authorize Helmian hands</h1>
+    <h1>Authorize Scribe hands</h1>
     <p class="sub">${sub}</p>
     <div class="client">Requesting app: <strong>${escapeHtml(clientName)}</strong></div>
     ${errorBlock}
