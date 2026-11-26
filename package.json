@@ -1,7 +1,7 @@
 {
   "name": "scribe",
-  "version": "1.0.10",
-  "description": "Scribe: one memory every AI you use can read and write, plus hands on your PC. One program: the Spoke (Windows agent + installer) and Hands hub, the Scribe memory server with the Librarian and Courier (Neon/Postgres), the door, and Guard.",
+  "version": "1.1.0",
+  "description": "Scribe: one memory every AI you use can read and write, plus hands on your PC. One program: the PC program (Windows agent + installer) and Hands hub, the Scribe memory server with the Librarian and Courier (Neon/Postgres), the door, and Guard.",
   "type": "module",
   "license": "BUSL-1.1",
   "private": true,
