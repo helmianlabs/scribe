@@ -29,7 +29,7 @@ jobs:
         shell: pwsh
         run: |
           choco install innosetup -y --no-progress
-          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" spoke/spoke-installer/HelmianSpoke.iss
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" spoke/spoke-installer/Scribe.iss
       - id: upload
         uses: actions/upload-artifact@v4
         with:
