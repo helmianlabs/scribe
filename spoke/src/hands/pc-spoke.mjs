@@ -1,4 +1,4 @@
-// Helmian hands: the PC spoke. Runs on Sam's PC inside the HelmianBridge
+// Scribe hands: the PC program. Runs on the user's PC.
 // service (started by bin/pc-bridge.mjs when hands are configured) or alone:
 //   node bin/hands-spoke.mjs pair      (once; asks for the hands passphrase)
 //   node bin/hands-spoke.mjs           (run)
@@ -31,7 +31,7 @@ import { defaultRootGrantsPath, loadRootGrants } from './root-grants.mjs';
 
 export { defaultRootGrantsPath } from './root-grants.mjs';
 
-export const DEFAULT_HANDS_URL = 'https://hands.5-78-222-178.sslip.io';
+export const DEFAULT_HANDS_URL = 'https://hands-scribe.5-78-222-178.sslip.io';
 
 export function defaultSpokeDeviceId() {
   return `pc-${hostname()}`.toLowerCase().slice(0, 60);
@@ -39,7 +39,7 @@ export function defaultSpokeDeviceId() {
 
 export function defaultConfigPath() {
   const base = process.env.APPDATA || join(homedir(), 'AppData', 'Roaming');
-  return join(base, 'Helmian', 'hands-spoke.json');
+  return join(base, 'Scribe', 'hands-spoke.json');
 }
 
 export function defaultUsedDecisionsPath() {
@@ -101,7 +101,7 @@ export async function readSpokeConfig(path = defaultConfigPath()) {
 const SECRET_PATH = [
   /(^|[\\/])\.env(\.[^\\/]*)?$/i, /\.(pem|key|pfx|p12|kdbx|ppk)$/i, /(^|[\\/])id_(rsa|ed25519|ecdsa|dsa)(\.pub)?$/i,
   /(^|[\\/])\.ssh([\\/]|$)/i, /(^|[\\/])\.aws([\\/]|$)/i, /(^|[\\/])\.git[\\/]config$/i, /(^|[\\/])\.npmrc$/i,
-  /AppData[\\/]Roaming[\\/]Helmian([\\/]|$)/i, /(^|[\\/])Helmion[\\/]Herald([\\/]|$)/i, /secret/i, /credential/i,
+  /AppData[\/]Roaming[\/]Scribe([\/]|$)/i, /AppData[\/]Roaming[\/]Helmian([\/]|$)/i, /(^|[\/])Helmion[\/]Herald([\/]|$)/i, /secret/i, /credential/i,
   /(^|[\\/])hands-spoke\.json$/i, /pc-bridge-token\.json$/i, /vault/i,
 ];
 
@@ -294,7 +294,7 @@ async function phoneScreen(spawnImpl) {
   const shot = await runBinary(found.adb, ['-s', found.serial, 'exec-out', 'screencap', '-p'], { spawnImpl, timeoutMs: 45000 });
   if (!shot.ok) return { ok: false, error: `the phone would not give its screen picture: ${shot.error}` };
   if (!shot.buffer.length) return { ok: false, error: 'the phone returned an empty screen picture (its screen may be off or locked)' };
-  const tmp = join(tmpdir(), `helmian-phone-screen-${process.pid}.png`);
+  const tmp = join(tmpdir(), `scribe-phone-screen-${process.pid}.png`);
   try {
     await writeFile(tmp, shot.buffer);
     const r = await run('powershell.exe', [...PS, phoneScreenScript(tmp)], { spawnImpl, timeoutMs: 45000 });
@@ -736,7 +736,7 @@ export function startSpoke({ config, fetchImpl = fetch, log = (...a) => console.
   // A full-pc scope pick expands the configured roots to every drive root
   // that exists (expandRootsForScope); any other pick leaves them untouched.
   const roots = expandRootsForScope({
-    roots: config.roots?.length ? config.roots : [process.env.HELMIAN_ROOT || process.cwd()],
+    roots: config.roots?.length ? config.roots : [process.env.SCRIBE_ROOT || process.cwd()],
     scopePick: config.scope ?? null,
   });
   const deviceId = config.deviceId || defaultSpokeDeviceId();
