@@ -24,7 +24,7 @@ function probe(env) {
       root: m.ACTION_GRANT_PC_ROOT,
       protocolPath: m.ACTION_GRANT_SPOKE_PROTOCOL_PATH,
       jobs: m.actionGrantCovers('write_file', { path: R + '\\\\jobs\\\\${UUID}.prompt.txt', content: 'x' }, claims),
-      edit: m.actionGrantCovers('edit_file', { path: ${JSON.stringify(`${PROFILE}\\AppData\\Local\\Programs\\Helmian\\hands-mcp\\src\\shared\\protocol.mjs`)} }, claims),
+      edit: m.actionGrantCovers('edit_file', { path: ${JSON.stringify(`${PROFILE}\\AppData\\Local\\Programs\\Scribe\\hands-mcp\\src\\shared\\protocol.mjs`)} }, claims),
       hash: m.guardActionHash(m.buildGuardAction('write_file', { path: R + '\\\\jobs\\\\${UUID}.prompt.txt', content: 'x' })),
     }));`;
   const clean = { PATH: process.env.PATH };
@@ -34,7 +34,7 @@ function probe(env) {
 test('Windows profile defaults reproduce the old hardcoded shapes exactly', () => {
   const r = probe({ USERPROFILE: PROFILE, LOCALAPPDATA: `${PROFILE}\\AppData\\Local` });
   assert.equal(r.root, `C:\\Users\\${NAME}\\pc-seat`);
-  assert.equal(r.protocolPath, `C:\\Users\\${NAME}\\AppData\\Local\\Programs\\Helmian\\hands-mcp\\src\\shared\\protocol.mjs`);
+  assert.equal(r.protocolPath, `C:\\Users\\${NAME}\\AppData\\Local\\Programs\\Scribe\\hands-mcp\\src\\shared\\protocol.mjs`);
   assert.equal(r.jobs, true);
   assert.equal(r.edit, true);
 });
@@ -44,7 +44,7 @@ test('USERPROFILE alone is enough; explicit overrides give the same answer', () 
   assert.deepEqual(probe({ USERPROFILE: PROFILE }), base);
   assert.deepEqual(probe({
     HANDS_ACTION_GRANT_PC_ROOT: `${PROFILE}\\pc-seat`,
-    HANDS_PROTOCOL_PATH: `${PROFILE}\\AppData\\Local\\Programs\\Helmian\\hands-mcp\\src\\shared\\protocol.mjs`,
+    HANDS_PROTOCOL_PATH: `${PROFILE}\\AppData\\Local\\Programs\\Scribe\\hands-mcp\\src\\shared\\protocol.mjs`,
   }), base);
 });
 
