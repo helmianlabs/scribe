@@ -32,7 +32,7 @@ function pickSignal(...signals) {
 export const WRITE_FILE_ANNOTATIONS = Object.freeze({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
 
 export function buildMcpServer(hands, auth, hooks = {}) {
-  const server = new McpServer({ name: 'helmian-hands', version: '0.1.0' });
+  const server = new McpServer({ name: 'scribe-hands', version: '0.1.0' });
   const ro = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   const act = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
   // Saving a text file is local (not open-world). Marking it open-world +
@@ -94,12 +94,12 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(RESOURCE_URL);
 
   app.get('/', (_req, res) => res.json({
-    name: 'helmian-hands-mcp', status: 'ok', mcp_endpoint: RESOURCE_URL.toString(), transport: 'streamable-http', auth: 'oauth2.1+pkce+dcr',
+    name: 'scribe-hands-mcp', status: 'ok', mcp_endpoint: RESOURCE_URL.toString(), transport: 'streamable-http', auth: 'oauth2.1+pkce+dcr',
     hands: hands.status().handsEnabled ? 'on' : 'off', guard: hands.status().guardLive ? 'live' : 'not live (mutating tools denied)',
   }));
   app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
-  app.use(mcpAuthRouter({ provider: oauth.provider, issuerUrl: ISSUER, baseUrl: ISSUER, resourceServerUrl: RESOURCE_URL, resourceName: 'Helmian hands', scopesSupported: ['hands.read', 'hands.act'] }));
+  app.use(mcpAuthRouter({ provider: oauth.provider, issuerUrl: ISSUER, baseUrl: ISSUER, resourceServerUrl: RESOURCE_URL, resourceName: 'Scribe hands', scopesSupported: ['hands.read', 'hands.act'] }));
 
   app.post('/consent', express.urlencoded({ extended: false }), (req, res) => {
     const pendingId = String(req.body?.pending_id || '');
@@ -148,8 +148,8 @@ export function createApp({ config, oauth, hands, hub, spokeTokens }) {
     if (!r.ok) return res.status(r.status).json({ error: r.error });
     return res.json({ token: r.token, deviceId: r.deviceId });
   });
-  // Mint a 10-minute, single-use pairing code. Only the Helmian web app (holding
-  // PAIR_CODE_ISSUER_TOKEN, after checking the signed-in owner) may call this.
+  // Mint a 10-minute, single-use pairing code. Only an operator holding the issuer token
+  // (PAIR_CODE_ISSUER_TOKEN, after checking the signed-in owner) may call this.
   // Unset token = endpoint off (404), so nothing changes until the operator opts in.
   app.post('/spoke/v1/pair-code', (req, res) => {
     const issuer = config.pairCodeIssuerToken;
