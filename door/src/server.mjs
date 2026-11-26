@@ -129,7 +129,7 @@ export function createApp({ config, oauth, backends }) {
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
 
-  const ISSUER = new URL(config.publicUrl); // e.g. https://scribe.helmian.cloud/door
+  const ISSUER = new URL(config.publicUrl); // e.g. https://scribe.dairyforge.com
   const RESOURCE_URL = new URL(`${config.publicUrl}${config.mcpPath}`);
   const HOST_ORIGIN = ISSUER.origin;
   // Discovery documents live at path-suffixed well-known URLs (RFC 9728 /
