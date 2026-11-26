@@ -2,9 +2,9 @@
 // Helmian hands: PC spoke.
 //   node bin/hands-spoke.mjs pair [--url https://hands.5-78-222-178.sslip.io] [--roots "E:\Helmion;D:\work"]
 //       asks for the hands passphrase (the same one as the memory connector) and saves
-//       %APPDATA%\Helmian\hands-spoke.json. Run once. The passphrase is never stored.
+//       %APPDATA%\Scribe\hands-spoke.json. Run once. The passphrase is never stored.
 //   node bin/hands-spoke.mjs pair --code ABCD-EFGH
-//       pairs with a 10-minute code from helmian.cloud (Settings, Set up this PC) instead of the passphrase.
+//       pairs with a 10-minute pairing code instead of the passphrase.
 //   node bin/hands-spoke.mjs providers [--json]
 //       shows which official AI CLIs (Claude Code, Codex, Gemini CLI, Grok) are installed and signed in.
 //   node bin/hands-spoke.mjs login <claude|chatgpt|gemini|grok>
@@ -16,7 +16,7 @@
 //       approval. See docs/hands/ROOT_GRANTS.md.
 //   node bin/hands-spoke.mjs add-root-grant <grant.json>
 //       verifies a signed root-grant envelope against the pinned Guard key and stores
-//       it in %APPDATA%\Helmian\roots.grants.json. The folder becomes READ-ONLY hands
+//       it in %APPDATA%\Scribe\roots.grants.json. The folder becomes READ-ONLY hands
 //       access for this PC only; mutating tools still refuse under it.
 //   node bin/hands-spoke.mjs list-root-grants
 //       lists the grants that currently verify (and any that were rejected, with why).
@@ -47,17 +47,17 @@ async function pairedConfig() {
 const cmd = process.argv[2];
 if (cmd === 'pair') {
   const url = (flag('url') || DEFAULT_HANDS_URL).replace(/\/+$/, '');
-  const roots = (flag('roots') || process.env.HELMIAN_ROOT || process.cwd()).split(';').map((s) => s.trim()).filter(Boolean);
-  // Preferred: the 10-minute code from helmian.cloud (Settings, Set up this PC).
+  const roots = (flag('roots') || process.env.SCRIBE_ROOT || process.cwd()).split(';').map((s) => s.trim()).filter(Boolean);
+// Preferred: the 10-minute pairing code.
   // Fallback: the hands passphrase. Either may be typed at the one prompt.
-  let pairCode = (flag('code') || process.env.HELMIAN_PAIR_CODE || '').trim();
-  let passphrase = process.env.HELMIAN_HANDS_PASSPHRASE || '';
+  let pairCode = (flag('code') || process.env.SCRIBE_PAIR_CODE || '').trim();
+  let passphrase = process.env.SCRIBE_HANDS_PASSPHRASE || '';
   if (!pairCode && !passphrase) {
-    const typed = (await readHidden('Pairing code from helmian.cloud (or hands passphrase): ')).trim();
+      const typed = (await readHidden('Scribe passphrase (or pairing code): ')).trim();
     if (looksLikePairCode(typed)) pairCode = typed; else passphrase = typed;
   } else if (!pairCode && looksLikePairCode(passphrase)) { pairCode = passphrase; passphrase = ''; }
   const r = await pairSpoke({ url, passphrase, pairCode: pairCode || undefined, roots });
-  console.log(`Paired as ${r.deviceId}. Workspace roots: ${r.roots.join(', ')}. Saved ${r.configPath}. Restart the HelmianBridge service (or run this without "pair").`);
+  console.log(`Paired as ${r.deviceId}. Workspace roots: ${r.roots.join(', ')}. Saved ${r.configPath}. Restart the Scribe task (or run this without "pair").`);
 } else if (cmd === 'sync-profile') {
   const res = await installAgentOsTargets({ targets: AGENT_OS_TARGETS, apply: true });
   console.log(JSON.stringify({ ok: true, ...res }, null, 2));
@@ -104,7 +104,7 @@ if (cmd === 'pair') {
   if (!st?.isDirectory()) { console.error(`Granted folder not found on this PC: ${v.claims.rootPath}. Nothing was stored.`); process.exit(2); }
   const grantsPath = cfg.rootGrantsPath || defaultRootGrantsPath();
   const claims = await activateRootGrant({ path: grantsPath, envelope, publicKeyX: cfg.guardPublicKeyX, spokeDeviceId: deviceId });
-  console.log(`Root grant ${claims.grantId} active: ${claims.rootPath} is now a READ-ONLY hands root for this PC (${claims.exp ? `until ${new Date(claims.exp * 1000).toISOString()}` : 'until revoked'}). Mutating tools still refuse under it. Grants file: ${grantsPath}. Restart the HelmianBridge service (or the spoke) if it is already running and you need the new root in its startup log; access itself is reloaded per call.`);
+  console.log(`Root grant ${claims.grantId} active: ${claims.rootPath} is now a READ-ONLY hands root for this PC (${claims.exp ? `until ${new Date(claims.exp * 1000).toISOString()}` : 'until revoked'}). Mutating tools still refuse under it. Grants file: ${grantsPath}. Restart the Scribe task (or the program) if it is already running and you need the new root in its startup log; access itself is reloaded per call.`);
 } else if (cmd === 'list-root-grants') {
   const cfg = await pairedConfig();
   const grantsPath = cfg.rootGrantsPath || defaultRootGrantsPath();
