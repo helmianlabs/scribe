@@ -1,5 +1,5 @@
 // Subscription sign-in on the user's own PC, through each provider's OFFICIAL,
-// unmodified CLI. Helmian never collects, stores, copies, or relays the
+// unmodified CLI. Scribe never collects, stores, copies, or relays the
 // provider credential: the CLI runs its own sign-in in a visible window and
 // keeps its own token file. We only check whether that file exists.
 //
@@ -9,7 +9,7 @@
 //   login or collecting/relaying Claude tokens (so no "paste your token" step).
 // - ChatGPT: Codex CLI "Sign in with ChatGPT" is OpenAI's own flow.
 // - Gemini: Gemini CLI "Login with Google" is Google's own flow; Google forbids
-//   other software piggybacking on that OAuth, so Helmian only launches the CLI.
+//   other software piggybacking on that OAuth, so Scribe only launches the CLI.
 // - Grok: the official Grok CLI (`grok login`, `--device-auth`) is xAI's flow.
 // - Antigravity: an IDE with no supported third-party access; status only.
 import { spawn } from 'node:child_process';
@@ -63,5 +63,5 @@ export async function openProviderLogin(id, { spawnImpl = spawn } = {}) {
   if (!(await onPath(lc.p.bin))) return { ok: false, message: `${lc.p.label} is not installed. Install it first: ${lc.p.install}` };
   const child = spawnImpl(lc.file, lc.args, { detached: true, stdio: 'ignore', windowsVerbatimArguments: true });
   child.unref?.();
-  return { ok: true, message: `Opened ${lc.p.label} sign-in in a new window${lc.p.note ? ` (${lc.p.note})` : ''}. Finish it there; Helmian never sees your password or token.` };
+  return { ok: true, message: `Opened ${lc.p.label} sign-in in a new window${lc.p.note ? ` (${lc.p.note})` : ''}. Finish it there; Scribe never sees your password or token.` };
 }
