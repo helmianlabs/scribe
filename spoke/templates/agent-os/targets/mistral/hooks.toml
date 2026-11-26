@@ -1,5 +1,5 @@
 # BEGIN AGENT OS HOOKS
-# Managed by the Helmian profile sync. Everything between the BEGIN and
+# Managed by the Scribe profile sync. Everything between the BEGIN and
 # END markers is refreshed on every sync; your own [[hooks]] tables
 # outside the markers are never touched.
 [[hooks]]
