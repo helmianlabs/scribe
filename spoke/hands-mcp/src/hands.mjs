@@ -304,7 +304,7 @@ export function createHands({ config, guard, hub, audit, mailer = null, mailboxF
       denied: 'It was denied in Executive Guard, so nothing ran.',
       expired: `Nobody approved it within ${ttlLabel}, so it expired and nothing ran. Ask again if it is still needed.`,
     }[kind];
-    const body = `Request: ${requestId}\nGuard approval: ${p.approvalId}\nAction: ${what}\n\n${head}${detail ? `\n\n${detail}` : ''}\n\n(Sent by Helmian hands; this request is finished and will not run again.)`;
+    const body = `Request: ${requestId}\nGuard approval: ${p.approvalId}\nAction: ${what}\n\n${head}${detail ? `\n\n${detail}` : ''}\n\n(Sent by Scribe hands; this request is finished and will not run again.)`;
     const recipients = [p.mailTo, ...(config.mailCcPaul && p.mailTo !== 'paul' ? ['paul'] : [])];
     for (const to of recipients) {
       const r = await mailer.send({ to, subject, body, priority: kind === 'ran' ? 'normal' : 'high' });
