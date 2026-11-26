@@ -1,17 +1,17 @@
 #!/usr/bin/env node
-// Helmian Spoke installer helper — run by the Setup program, hidden. Also run
+// Scribe installer helper — run by the Setup program, hidden. Also run
 // by the "Try again" button on Setup's last page (with no code: keeps pairing).
 //   1. Pairs this PC (the passphrase/code arrives in the environment, set by
 //      the installer from its own pairing page; it is never stored).
 //   2. Pins the Executive Guard public key (fetched live; a known public key
 //      is kept as a fallback — public keys are not secrets).
-//   3. Registers the HelmianSpoke sign-in task so the spoke runs HIDDEN
+//   3. Registers the Scribe sign-in task so the spoke runs HIDDEN
 //      (conhost --headless, no window ever), with restart-on-failure and no
 //      3-day time limit. PowerShell Register-ScheduledTask first (works without
 //      admin); schtasks.exe as a fallback. Every failure is logged, never silent.
 //   4. Starts it now (no restart needed) and checks it is really running and
 //      has reached the hub (the spoke writes spoke-heartbeat.json per poll).
-//   5. Writes %APPDATA%\Helmian\spoke-install-status.json so the installer's
+//   5. Writes %APPDATA%\Scribe\spoke-install-status.json so the installer's
 //      last page can say honestly what worked and offer a one-click retry.
 import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -19,12 +19,12 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-export const TASK_NAME = 'HelmianSpoke';
-const GUARD_KEYS_URL = 'https://guard.5-78-222-178.sslip.io/v1/keys';
-const FALLBACK_GUARD_X = 'gl0V8jCzSUtxVPlG6ZXtNXljhfGxDCUdpVZC00h0R4I';
+export const TASK_NAME = 'Scribe';
+const GUARD_KEYS_URL = 'https://guard-scribe.5-78-222-178.sslip.io/v1/keys';
+const FALLBACK_GUARD_X = 'ED3oj_iSdHQtcaO0Qi_IEleoE4rjZ-9bU_DDmlVePWA';
 
-export function helmianDir(env = process.env) {
-  return path.join(env.APPDATA || path.join(homedir(), 'AppData', 'Roaming'), 'Helmian');
+export function scribeDir(env = process.env) {
+  return path.join(env.APPDATA || path.join(homedir(), 'AppData', 'Roaming'), 'Scribe');
 }
 
 /** PowerShell that (re)registers and starts the hidden spoke task. Takes -Dir. */
@@ -41,7 +41,7 @@ $action = New-ScheduledTaskAction -Execute $conhost -Argument $arg -WorkingDirec
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $me
 $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -DontStopOnIdleEnd -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)
 $principal = New-ScheduledTaskPrincipal -UserId $me -LogonType Interactive -RunLevel Limited
-Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Helmian Spoke: lets your Helmian AIs reach this PC, with Executive Guard approval. Runs hidden.' -Force | Out-Null
+Register-ScheduledTask -TaskName $name -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Description 'Scribe: lets your AIs reach this PC through Scribe, with Scribe Guard approval. Runs hidden.' -Force | Out-Null
 Start-ScheduledTask -TaskName $name
 'registered-and-started'
 `;
@@ -112,17 +112,17 @@ export async function verifySpoke({ heartbeatFile, sinceMs, timeoutMs = 60000, i
     if (running && hb && hb.connected) return { running: true, connected: true };
     await sleep(intervalMs);
   }
-  if (!running) return { running: false, connected: false, error: 'the spoke did not keep running after it was started' };
-  if (hb && hb.status === 401) return { running: true, connected: false, error: 'the Helmian server did not accept this PC; pair it again with a new code' };
-  return { running: true, connected: false, error: 'the spoke is running but could not reach the Helmian server (check the internet connection)' };
+  if (!running) return { running: false, connected: false, error: 'the Scribe program did not keep running after it was started' };
+  if (hb && hb.status === 401) return { running: true, connected: false, error: 'the Scribe server did not accept this PC; pair it again with your Scribe passphrase' };
+  return { running: true, connected: false, error: 'the Scribe program is running but could not reach the Scribe server (check the internet connection)' };
 }
 
 async function main() {
   const appDir = process.cwd();
   const node = path.join(appDir, 'node.exe');
   const spoke = path.join(appDir, 'bin', 'hands-spoke.mjs');
-  const roots = process.env.HELMIAN_SPOKE_ROOTS || homedir();
-  const dir = helmianDir();
+  const roots = process.env.SCRIBE_SPOKE_ROOTS || homedir();
+  const dir = scribeDir();
   mkdirSync(dir, { recursive: true });
   const logPath = path.join(dir, 'spoke-install.log');
   const log = (m) => { try { appendFileSync(logPath, `${new Date().toISOString()} ${m}\n`); } catch { /* ignore */ } };
@@ -132,7 +132,7 @@ async function main() {
   log(`install-pair start in ${appDir}`);
 
   const configPath = path.join(dir, 'hands-spoke.json');
-  if (!String(process.env.HELMIAN_HANDS_PASSPHRASE || '').trim() && existsSync(configPath)) {
+  if (!String(process.env.SCRIBE_HANDS_PASSPHRASE || '').trim() && existsSync(configPath)) {
     status.paired = true; // upgrade/retry with the code left blank: keep the existing pairing
     status.keptPairing = true;
   } else {
