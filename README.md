@@ -1,57 +1,74 @@
 # Scribe
 
-Scribe is a small program that runs on your Windows PC
-and lets the agents you add in [Helmian](https://helmian.cloud) do work on that
-PC, such as building and previewing projects, only inside the folders you allow.
-It pairs once with a short code and then starts each time you sign in.
+Scribe is one shared memory for every AI you use, a mailbox where your AIs
+leave each other letters, and a pair of hands on your own computer. Any AI
+that can speak MCP can use it.
 
-This repository holds **all of Scribe**, one program and one download, under the
-Business Source License 1.1. The Helmian cloud app is a separate product and is not part of
-this repository.
+Scribe is a standalone product. Your PC pairs with Scribe itself, through
+Scribe's own door (scribe.dairyforge.com), under Scribe's own Guard, using
+your Scribe passphrase. It does not need an account with any other product.
+
+This repository holds **all of Scribe** — the PC program, the memory server,
+the door and the Guard — under the Business Source License 1.1 (see LICENSE).
 
 ## What's in this repository
 
-| Folder | What it is | Came from (history kept) |
-|---|---|---|
-| `spoke/` | The Spoke (Windows agent), its installer (`spoke/spoke-installer/`), the agent-os profile kit, and the Hands hub (`spoke/hands-mcp/`) that connects your AIs to the PC and to each AI's Hetzner box | helmianlabs/helmian |
-| `server/` | The Scribe memory server: shared memory, the Librarian, Courier, the Neon/Postgres connection and migrations | shared-memory-mcp |
-| `door/` | The Scribe door: one OAuth consent and one MCP endpoint for the memory and hands toolsets | helmianlabs/helmian |
-| `guard/` | Guard, whole and unchanged: the browser extension (with auto-nudge), Executive Guard, and the kernel sources the extension is generated from | helmianlabs/helmian |
+| Folder | What it is |
+|---|---|
+| `spoke/` | The Spoke (Windows agent), its installer (`spoke/spoke-installer/`), the agent-os profile kit, and the Hands hub (`spoke/hands-mcp/`) that connects your AIs to the PC |
+| `server/` | The Scribe memory server: shared memory, the Librarian, Courier (the AIs' mailbox), the Neon/Postgres connection and migrations |
+| `door/` | The Scribe door at scribe.dairyforge.com: one OAuth consent and one MCP endpoint for the memory and hands toolsets |
+| `guard/` | Scribe's Guard, whole and unchanged: the browser extension (with auto-nudge), Executive Guard, and the kernel sources the extension is generated from |
 
 `guard/hands-mcp` and `guard/src/hands` are links to the Spoke copies, so
 Guard's own cross-checks run here without changing any Guard file.
 
 ## Download
 
-Signed releases: see [Releases](https://github.com/helmianlabs/Scribe/releases).
-Each release is built from this repository's source in GitHub Actions.
+Signed releases: see [Releases](https://github.com/helmianlabs/scribe/releases).
+Download the Windows setup program, run it, and enter your Scribe passphrase
+when it asks. That is the whole setup. Each release is built from this
+repository's source in GitHub Actions.
 
 ## What it does
 
-- **Pairs** your PC with your Helmian account using a one-time code from
-  helmian.cloud (Settings > "Set up this PC"). The code is used during setup
-  and is not stored.
-- **Runs approved work** that your Helmian agents send, limited to the folders
-  you chose (by default your user folder). Root-level actions need a signed
-  grant from you.
-- **Opens your own AI app sign-ins** (for example the ChatGPT, Claude, Grok or
-  Gemini command-line tools) on your PC when you ask, so you can use the plan
-  you already pay for. The spoke never sees those passwords.
-- **Starts at sign-in** through a Windows scheduled task named `HelmianSpoke`.
+- **Remembers once, for every AI.** Every AI you connect reads and writes the
+  same shared memory, so what one AI learns, the others can use.
+- **Gives your AIs a mailbox.** With Courier, your AIs leave each other
+  letters: hand-offs, status and questions, delivered through Scribe.
+- **Pairs** your PC with Scribe once, using your Scribe passphrase, and then
+  starts each time you sign in through a Windows scheduled task named
+  `ScribeSpoke`.
+- **Runs approved work** that your AIs send through Scribe, limited to the
+  folders you chose (by default your user folder). Work Scribe's Guard flags
+  asks for an approval first. Root-level actions need a signed grant from
+  you.
+- **Opens your own AI app sign-ins** (for example the ChatGPT, Claude, Grok
+  or Gemini command-line tools) on your PC when you ask, so you can use the
+  plan you already pay for. The program never sees those passwords.
+
+## Plans
+
+- **Free** — $0: 3 AIs, 1,000 memories
+- **Solo** — $5/month or $50/year
+- **Team** — $12 per person/month
+- **Self-Hosted** — custom
+
+See [scribe.helmian.cloud](https://scribe.helmian.cloud) for details.
 
 ## Install
 
-1. Download `Helmian-Spoke-Setup-<version>-win-x64.exe` from Releases.
-2. Run it and paste the pairing code from helmian.cloud when asked.
+1. Download the Windows setup program from
+   [Releases](https://github.com/helmianlabs/scribe/releases).
+2. Run it and enter your Scribe passphrase when asked.
 
-The installer is per-user (no admin rights) and installs to
-`%LOCALAPPDATA%\Programs\HelmianSpoke`.
+The installer is per-user; no admin rights are needed.
 
 ## Uninstall
 
-Windows Settings > Apps > Installed apps > **Helmian Spoke** > Uninstall.
-This removes the program, the `HelmianSpoke` sign-in task and the spoke's
-settings in `%APPDATA%\Helmian`.
+Windows Settings > Apps > Installed apps > **Scribe** > Uninstall.
+This removes the program, the `ScribeSpoke` sign-in task and the program's
+settings in `%APPDATA%\Scribe`.
 
 ## Build from source
 
@@ -63,7 +80,7 @@ npm run stage:spoke   # stage the one Windows download for Inno Setup
 
 The Windows installer is built by `.github/workflows/release.yml`
 (Node.js runtime bundled, `scripts/stage-spoke.mjs`, Inno Setup compile of
-`spoke/spoke-installer/HelmianSpoke.iss`, SignPath signing).
+the spoke installer, SignPath signing).
 
 ## PC paths (settings, no user names in source)
 
@@ -100,7 +117,8 @@ default `auto-approve`), and approver identities come from
 ## Code signing policy
 
 See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+Free code signing provided by [SignPath.io](https://about.signpath.io/),
+certificate by [SignPath Foundation](https://signpath.org/).
 
 ## Privacy
 
@@ -108,5 +126,6 @@ See [PRIVACY.md](PRIVACY.md).
 
 ## License
 
-Business Source License 1.1. Copyright (c) 2026 DairyForge LLC. Bundled Node.js is under its own
-MIT-style license (https://github.com/nodejs/node/blob/main/LICENSE).
+Business Source License 1.1. Copyright (c) 2026 DairyForge LLC. Bundled
+Node.js is under its own license
+(https://github.com/nodejs/node/blob/main/LICENSE).
