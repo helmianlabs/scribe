@@ -4,9 +4,15 @@ Scribe is one shared memory for every AI you use, a mailbox where your AIs
 leave each other letters, and a pair of hands on your own computer. Any AI
 that can speak MCP can use it.
 
-Scribe is a standalone product. Your PC pairs with Scribe itself, through
-Scribe's own door (scribe.dairyforge.com), under Scribe's own Guard, using
-your Scribe passphrase. It does not need an account with any other product.
+Your AIs connect to Scribe's memory and mailbox through Scribe's own door
+(`https://scribe.dairyforge.com/mcp`), and the owner approves each
+connection with the Scribe passphrase.
+
+The PC program is, today, the **Helmian Spoke**: the Windows installer is
+named Helmian Spoke and pairs your PC through the Helmian Hands relay,
+using a 10-minute pairing code from helmian.cloud (Settings, Set up this
+PC) or the hands passphrase. Moving the PC program onto Scribe's own door
+and name is planned and not done yet.
 
 This repository holds **all of Scribe** — the PC program, the memory server,
 the door and the Guard — under the Business Source License 1.1 (see LICENSE).
@@ -33,10 +39,14 @@ Guard's own cross-checks run here without changing any Guard file.
 
 ## Download
 
-Signed releases: see [Releases](https://github.com/helmianlabs/scribe/releases).
-Download the Windows setup program, run it, and enter your Scribe passphrase
-when it asks. That is the whole setup. Each release is built from this
-repository's source in GitHub Actions.
+See [Releases](https://github.com/helmianlabs/scribe/releases). Each
+release is built from this repository's source in GitHub Actions.
+
+- The Windows installer is **not code-signed yet**, so Windows SmartScreen
+  warns before it runs (More info, then Run anyway).
+- The newest published release is v0.1.4 (`Helmian-Spoke-Setup-1.0.7-win-x64.exe`,
+  October 30, 2026). The source in this repository is version 1.0.10; a
+  release of it has not been cut yet.
 
 ## What it does
 
@@ -44,10 +54,10 @@ repository's source in GitHub Actions.
   same shared memory, so what one AI learns, the others can use.
 - **Gives your AIs a mailbox.** With Courier, your AIs leave each other
   letters: hand-offs, status and questions, delivered through Scribe.
-- **Pairs** your PC with Scribe once, using your Scribe passphrase, and then
-  starts each time you sign in through a Windows scheduled task named
-  `ScribeSpoke`.
-- **Runs approved work** that your AIs send through Scribe, limited to the
+- **Pairs** your PC once, with a pairing code from helmian.cloud or the
+  hands passphrase, and then starts each time you sign in through a
+  Windows scheduled task named `HelmianSpoke`.
+- **Runs approved work** that your AIs send, limited to the
   folders you chose (by default your user folder). Work Scribe's Guard flags
   asks for an approval first. Root-level actions need a signed grant from
   you.
@@ -62,21 +72,23 @@ repository's source in GitHub Actions.
 - **Team** — $12 per person/month
 - **Self-Hosted** — custom
 
+Checkout is not open yet; these plans apply when public sign-up launches.
 See [scribe.helmian.cloud](https://scribe.helmian.cloud) for details.
 
 ## Install
 
-1. Download the Windows setup program from
+1. Download `Helmian-Spoke-Setup-<version>-win-x64.exe` from
    [Releases](https://github.com/helmianlabs/scribe/releases).
-2. Run it and enter your Scribe passphrase when asked.
+2. Run it (Windows will warn because it is unsigned) and paste the
+   pairing code from helmian.cloud, or your hands passphrase, when asked.
 
 The installer is per-user; no admin rights are needed.
 
 ## Uninstall
 
-Windows Settings > Apps > Installed apps > **Scribe** > Uninstall.
-This removes the program, the `ScribeSpoke` sign-in task and the program's
-settings in `%APPDATA%\Scribe`.
+Windows Settings > Apps > Installed apps > **Helmian Spoke** > Uninstall.
+This removes the program, the `HelmianSpoke` sign-in task and the spoke's
+settings files in `%APPDATA%\Helmian`.
 
 ## Build from source
 
@@ -88,7 +100,8 @@ npm run stage:spoke   # stage the one Windows download for Inno Setup
 
 The Windows installer is built by `.github/workflows/release.yml`
 (Node.js runtime bundled, `scripts/stage-spoke.mjs`, Inno Setup compile of
-the spoke installer, SignPath signing).
+the spoke installer, then SignPath signing once it is set up; it is not
+active yet).
 
 ## PC paths (settings, no user names in source)
 
@@ -122,11 +135,11 @@ default `auto-approve`), and approver identities come from
 `EXEC_GUARD_APPROVER_TOKENS` (`name=token`, see
 `guard/executive-guard/deploy/executive-guard.env.example`).
 
-## Code signing policy
+## Code signing
 
-See [CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
-Free code signing provided by [SignPath.io](https://about.signpath.io/),
-certificate by [SignPath Foundation](https://signpath.org/).
+Not active yet: releases so far are unsigned. Signing through
+[SignPath.io](https://about.signpath.io/) is planned; see
+[CODE_SIGNING_POLICY.md](CODE_SIGNING_POLICY.md).
 
 ## Privacy
 

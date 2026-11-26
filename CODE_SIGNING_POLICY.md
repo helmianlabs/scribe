@@ -1,6 +1,10 @@
 # Code signing policy
 
-Free code signing provided by [SignPath.io](https://about.signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+**Status (November 26, 2026): not active.** Releases v0.1.0 through v0.1.4
+are unsigned. Signing through [SignPath.io](https://about.signpath.io/),
+with a certificate from [SignPath Foundation](https://signpath.org/), is
+planned; the release workflow skips the signing step until it is set up.
+The policy below is the one that will apply once signing is on.
 
 Only Windows release artifacts built by this repository's GitHub Actions
 workflow from the source code in this repository are signed. Every signing
