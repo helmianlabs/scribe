@@ -1,7 +1,7 @@
-; Helmian Spoke — standalone installer.
+; Scribe — standalone installer.
 ; One Setup file: installs the spoke, asks the pairing passphrase once on its
 ; own page (used inside the install, never stored), pairs, pins the Executive
-; Guard key, and sets the spoke to start at sign-in. No Helmian app needed.
+; Guard key, and sets the spoke to start at sign-in. No other app needed.
 ; The workflow stages the spoke tree into .\stage before compiling
 ; (scripts/stage-spoke.mjs at the Scribe repo root, plus node.exe):
 ;   stage\node.exe, stage\bin\hands-spoke.mjs, stage\src\hands\*.mjs
@@ -11,19 +11,19 @@
 
 [Setup]
 AppId={{EEE4DDE3-DB3E-453E-B88D-0C9146ECA332}
-AppName=Helmian Spoke
-AppVersion=1.0.10
-AppPublisher=Helmian Labs
-DefaultDirName={localappdata}\Programs\HelmianSpoke
-DefaultGroupName=Helmian Spoke
+AppName=Scribe
+AppVersion=1.1.0
+AppPublisher=DairyForge LLC
+DefaultDirName={localappdata}\Programs\Scribe
+DefaultGroupName=Scribe
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=output
-OutputBaseFilename=Helmian-Spoke-Setup-1.0.10-win-x64
+OutputBaseFilename=Scribe-Setup-1.1.0-win-x64
 Compression=lzma2/max
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayName=Helmian Spoke
+UninstallDisplayName=Scribe
 LicenseFile=..\..\LICENSE
 InfoBeforeFile=..\..\PRIVACY.md
 
@@ -31,7 +31,7 @@ InfoBeforeFile=..\..\PRIVACY.md
 Source: "stage\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Pair the Helmian Spoke"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" pair"; WorkingDir: "{app}"; Comment: "Recovery only: pair this PC again if pairing did not finish during setup."
+Name: "{group}\Pair Scribe"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" pair"; WorkingDir: "{app}"; Comment: "Recovery only: pair this PC again if pairing did not finish during setup."
 
 Name: "{group}\Sign in to Claude (your plan)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login claude"; WorkingDir: "{app}"
 Name: "{group}\Sign in to ChatGPT (your plan)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login chatgpt"; WorkingDir: "{app}"
@@ -39,10 +39,15 @@ Name: "{group}\Sign in to Gemini (your Google account)"; Filename: "{app}\node.e
 Name: "{group}\Sign in to SuperGrok (your plan)"; Filename: "{app}\node.exe"; Parameters: """{app}\bin\hands-spoke.mjs"" login grok"; WorkingDir: "{app}"
 
 [UninstallRun]
-Filename: "schtasks.exe"; Parameters: "/End /TN HelmianSpoke"; Flags: runhidden; RunOnceId: "EndSpokeTask"
-Filename: "schtasks.exe"; Parameters: "/Delete /TN HelmianSpoke /F"; Flags: runhidden; RunOnceId: "DelSpokeTask"
+Filename: "schtasks.exe"; Parameters: "/End /TN Scribe"; Flags: runhidden; RunOnceId: "EndSpokeTask"
+Filename: "schtasks.exe"; Parameters: "/Delete /TN Scribe /F"; Flags: runhidden; RunOnceId: "DelSpokeTask"
+Filename: "schtasks.exe"; Parameters: "/End /TN HelmianSpoke"; Flags: runhidden; RunOnceId: "EndOldTask"
+Filename: "schtasks.exe"; Parameters: "/Delete /TN HelmianSpoke /F"; Flags: runhidden; RunOnceId: "DelOldTask"
 
 [UninstallDelete]
+Type: files; Name: "{userappdata}\Scribe\hands-spoke.json"
+Type: files; Name: "{userappdata}\Scribe\spoke-install-status.json"
+Type: files; Name: "{userappdata}\Scribe\spoke-heartbeat.json"
 Type: files; Name: "{userappdata}\Helmian\hands-spoke.json"
 Type: files; Name: "{userappdata}\Helmian\spoke-install-status.json"
 Type: files; Name: "{userappdata}\Helmian\spoke-heartbeat.json"
@@ -58,7 +63,7 @@ function SetEnvironmentVariable(lpName, lpValue: String): Boolean;
 
 function IsUpgrade(): Boolean;
 begin
-  Result := FileExists(ExpandConstant('{userappdata}\Helmian\hands-spoke.json'));
+  Result := FileExists(ExpandConstant('{userappdata}\Scribe\hands-spoke.json')) or FileExists(ExpandConstant('{userappdata}\Helmian\hands-spoke.json'));
 end;
 
 { Stop the running spoke (scheduled task and any node process running
@@ -68,6 +73,7 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   ResultCode: Integer;
 begin
+  Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN Scribe', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\schtasks.exe'), '/End /TN HelmianSpoke', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
     '-NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process -Filter \"Name=''node.exe''\" | Where-Object { $_.CommandLine -like ''*hands-spoke.mjs*'' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"',
@@ -77,7 +83,7 @@ begin
     unregister those tasks and kill helmian-spoke.exe from any path so only the
     new spoke answers for this PC. The old exe file itself is left in place. }
   Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-    '-NoProfile -ExecutionPolicy Bypass -Command "Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { $_.TaskName -ne ''HelmianSpoke'' -and ($_.TaskName -match ''^Helmian[ _-]?(Spoke|Bridge)'' -or ($_.Actions | Where-Object { $_.Execute -like ''*helmian-spoke.exe*'' })) } | ForEach-Object { Stop-ScheduledTask -InputObject $_ -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -Confirm:$false -ErrorAction SilentlyContinue }; Get-Process -Name helmian-spoke -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"',
+    '-NoProfile -ExecutionPolicy Bypass -Command "Get-ScheduledTask -ErrorAction SilentlyContinue | Where-Object { ($_.TaskName -ne ''HelmianSpoke'' -and $_.TaskName -ne ''Scribe'') -and ($_.TaskName -match ''^Helmian[ _-]?(Spoke|Bridge)'' -or ($_.Actions | Where-Object { $_.Execute -like ''*helmian-spoke.exe*'' })) } | ForEach-Object { Stop-ScheduledTask -InputObject $_ -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $_.TaskName -TaskPath $_.TaskPath -Confirm:$false -ErrorAction SilentlyContinue }; Get-Process -Name helmian-spoke -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Sleep(1500);
   Result := '';
@@ -87,9 +93,9 @@ procedure InitializeWizard;
 begin
   PairPage := CreateInputQueryPage(wpWelcome,
     'Pair this PC',
-    'Paste the pairing code from helmian.cloud',
-    'In Helmian, open Settings and press "Set up this PC". Paste the 8-letter code it shows (it works once, for 10 minutes). Owners can type the hands passphrase instead. It is used once, here, and never stored. Already paired? Leave it blank to keep your current pairing.');
-  PairPage.Add('Pairing code (or hands passphrase):', False);
+    'Type your Scribe passphrase',
+    'This is the passphrase for your Scribe account, the same one your AIs use to connect to Scribe at scribe.dairyforge.com. It is used once, here, and never stored. You can also paste a one-time pairing code instead. Already paired? Leave it blank to keep your current pairing.');
+  PairPage.Add('Scribe passphrase (or pairing code):', False);
   { Setup.exe /PAIRCODE=ABCD-EFGH fills it in for you. }
   PairPage.Values[0] := ExpandConstant('{param:PAIRCODE|}');
 end;
@@ -101,7 +107,7 @@ begin
   begin
     if (Trim(PairPage.Values[0]) = '') and not IsUpgrade() then
     begin
-      MsgBox('Please paste the pairing code from helmian.cloud (Settings, Set up this PC), or your hands passphrase. It is used once, inside this install, and never stored.', mbError, MB_OK);
+      MsgBox('Please type your Scribe passphrase (or paste a pairing code). It is used once, inside this install, and never stored.', mbError, MB_OK);
       Result := False;
     end;
   end;
@@ -113,12 +119,12 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    SetEnvironmentVariable('HELMIAN_HANDS_PASSPHRASE', PairPage.Values[0]);
-    SetEnvironmentVariable('HELMIAN_SPOKE_ROOTS', ExpandConstant('{%USERPROFILE}'));
+    SetEnvironmentVariable('SCRIBE_HANDS_PASSPHRASE', PairPage.Values[0]);
+    SetEnvironmentVariable('SCRIBE_SPOKE_ROOTS', ExpandConstant('{%USERPROFILE}'));
     Exec(ExpandConstant('{app}\node.exe'), ExpandConstant('"{app}\install-pair.mjs"'),
       ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
     { install-pair registers the hidden task, starts it, and checks it is running and connected. }
-    SetEnvironmentVariable('HELMIAN_HANDS_PASSPHRASE', '');
+    SetEnvironmentVariable('SCRIBE_HANDS_PASSPHRASE', '');
   end;
 end;
 
@@ -163,25 +169,25 @@ var
   Ok: Boolean;
 begin
   Ok := False;
-  if LoadStringFromFile(ExpandConstant('{userappdata}\Helmian\spoke-install-status.json'), A) then
+  if LoadStringFromFile(ExpandConstant('{userappdata}\Scribe\spoke-install-status.json'), A) then
   begin
     S := String(A);
     if not StatusHas(S, 'paired') then
       WizardForm.FinishedLabel.Caption :=
-        'The spoke is installed, but pairing did not finish. Open "Pair the Helmian Spoke" from the Start menu with a new code from helmian.cloud, then press Try again.'
+        'Scribe is installed, but pairing did not finish. Open "Pair Scribe" from the Start menu and try again with your Scribe passphrase, then press Try again.'
     else if StatusHas(S, 'running') and StatusHas(S, 'connected') then
     begin
       Ok := True;
       WizardForm.FinishedLabel.Caption :=
-        'All set. Helmian Spoke is installed, paired, running in the background and connected. You will not see a window. It keeps running and starts by itself whenever you sign in to Windows. No restart needed.';
+        'All set. Scribe is installed, paired, running in the background and connected. You will not see a window. It keeps running and starts by itself whenever you sign in to Windows. No restart needed.';
     end
     else
       WizardForm.FinishedLabel.Caption :=
-        'Helmian Spoke is installed and paired, but it is NOT running yet (' + StatusError(S) + ').' + #13#10#13#10 +
-        'Press Try again. If it still fails, send the file %APPDATA%\Helmian\spoke-install.log to Helmian support.';
+        'Scribe is installed and paired, but it is NOT running yet (' + StatusError(S) + ').' + #13#10#13#10 +
+        'Press Try again. If it still fails, send the file %APPDATA%\Scribe\spoke-install.log to Scribe support.';
   end
   else
-    WizardForm.FinishedLabel.Caption := 'Setup could not confirm the spoke started. Press Try again.';
+    WizardForm.FinishedLabel.Caption := 'Setup could not confirm Scribe started. Press Try again.';
   RetryButton.Visible := not Ok;
   RetryButton.Enabled := True;
   RetryButton.Caption := 'Try again';
@@ -193,10 +199,10 @@ var
 begin
   RetryButton.Enabled := False;
   RetryButton.Caption := 'Starting...';
-  WizardForm.FinishedLabel.Caption := 'Starting Helmian Spoke and checking it can reach Helmian. This can take up to a minute...';
+  WizardForm.FinishedLabel.Caption := 'Starting Scribe and checking it can reach Scribe. This can take up to a minute...';
   WizardForm.Refresh;
-  SetEnvironmentVariable('HELMIAN_HANDS_PASSPHRASE', '');
-  SetEnvironmentVariable('HELMIAN_SPOKE_ROOTS', ExpandConstant('{%USERPROFILE}'));
+  SetEnvironmentVariable('SCRIBE_HANDS_PASSPHRASE', '');
+  SetEnvironmentVariable('SCRIBE_SPOKE_ROOTS', ExpandConstant('{%USERPROFILE}'));
   Exec(ExpandConstant('{app}\node.exe'), ExpandConstant('"{app}\install-pair.mjs"'),
     ExpandConstant('{app}'), SW_HIDE, ewWaitUntilTerminated, ResultCode);
   ShowSpokeStatus;
