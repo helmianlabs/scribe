@@ -7,12 +7,11 @@ that can speak MCP can use it.
 Your AIs connect to Scribe's memory and mailbox through Scribe's own door
 (`https://scribe.dairyforge.com/mcp`), and the owner approves each
 connection with the Scribe passphrase.
+Your AIs connect to Scribe at https://scribe.dairyforge.com/mcp.
 
-The PC program is, today, the **Helmian Spoke**: the Windows installer is
-named Helmian Spoke and pairs your PC through the Helmian Hands relay,
-using a 10-minute pairing code from helmian.cloud (Settings, Set up this
-PC) or the hands passphrase. Moving the PC program onto Scribe's own door
-and name is planned and not done yet.
+The PC program is **Scribe**: the Windows installer is
+named Scribe and pairs your PC through the Scribe hands hub,
+using your Scribe passphrase or a 10-minute pairing code.
 
 This repository holds **all of Scribe** — the PC program, the memory server,
 the door and the Guard — under the Business Source License 1.1 (see LICENSE).
@@ -29,12 +28,12 @@ The Scribe site, where an AI connects in one paste:
 
 | Folder | What it is |
 |---|---|
-| `spoke/` | The Spoke (Windows agent), its installer (`spoke/spoke-installer/`), the agent-os profile kit, and the Hands hub (`spoke/hands-mcp/`) that connects your AIs to the PC |
+| `spoke/` | The Scribe PC program (Windows agent), its installer, the agent-os profile kit, and the hands hub that connects your AIs to the PC |
 | `server/` | The Scribe memory server: shared memory, the Librarian, Courier (the AIs' mailbox), the Neon/Postgres connection and migrations |
 | `door/` | The Scribe door at scribe.dairyforge.com: one OAuth consent and one MCP endpoint for the memory and hands toolsets |
 | `guard/` | Scribe's Guard, whole and unchanged: the browser extension (with auto-nudge), Executive Guard, and the kernel sources the extension is generated from |
 
-`guard/hands-mcp` and `guard/src/hands` are links to the Spoke copies, so
+`guard/hands-mcp` and `guard/src/hands` are links to the PC program's copies, so
 Guard's own cross-checks run here without changing any Guard file.
 
 ## Download
@@ -44,9 +43,7 @@ release is built from this repository's source in GitHub Actions.
 
 - The Windows installer is **not code-signed yet**, so Windows SmartScreen
   warns before it runs (More info, then Run anyway).
-- The newest published release is v0.1.4 (`Helmian-Spoke-Setup-1.0.7-win-x64.exe`,
-  October 30, 2026). The source in this repository is version 1.0.10; a
-  release of it has not been cut yet.
+- The newest published release is v1.1.0 (`Scribe-Setup-1.1.0-win-x64.exe`, November 26, 2026).
 
 ## What it does
 
@@ -54,9 +51,9 @@ release is built from this repository's source in GitHub Actions.
   same shared memory, so what one AI learns, the others can use.
 - **Gives your AIs a mailbox.** With Courier, your AIs leave each other
   letters: hand-offs, status and questions, delivered through Scribe.
-- **Pairs** your PC once, with a pairing code from helmian.cloud or the
-  hands passphrase, and then starts each time you sign in through a
-  Windows scheduled task named `HelmianSpoke`.
+- **Pairs** your PC once, with your Scribe passphrase or a one-time pairing code,
+  and then starts each time you sign in through a
+  Windows scheduled task named `Scribe`.
 - **Runs approved work** that your AIs send, limited to the
   folders you chose (by default your user folder). Work Scribe's Guard flags
   asks for an approval first. Root-level actions need a signed grant from
@@ -73,28 +70,28 @@ release is built from this repository's source in GitHub Actions.
 - **Self-Hosted** — custom
 
 Checkout is not open yet; these plans apply when public sign-up launches.
-See [scribe.helmian.cloud](https://scribe.helmian.cloud) for details.
+See [scribe.dairyforge.com](https://scribe.dairyforge.com) for details.
 
 ## Install
 
-1. Download `Helmian-Spoke-Setup-<version>-win-x64.exe` from
+1. Download `Scribe-Setup-<version>-win-x64.exe` from
    [Releases](https://github.com/helmianlabs/scribe/releases).
-2. Run it (Windows will warn because it is unsigned) and paste the
-   pairing code from helmian.cloud, or your hands passphrase, when asked.
+2. Run it (Windows will warn because it is unsigned) and type your Scribe passphrase, or paste a pairing code,
+   when asked.
 
 The installer is per-user; no admin rights are needed.
 
 ## Uninstall
 
-Windows Settings > Apps > Installed apps > **Helmian Spoke** > Uninstall.
-This removes the program, the `HelmianSpoke` sign-in task and the spoke's
-settings files in `%APPDATA%\Helmian`.
+Windows Settings > Apps > Installed apps > **Scribe** > Uninstall.
+This removes the program, the `Scribe` sign-in task and Scribe's
+settings files in `%APPDATA%\Scribe`.
 
 ## Build from source
 
 ```
 npm run install:all   # dependencies for the hub, server, server app and door
-npm test              # node --check on the Spoke, then every piece's tests
+npm test              # node --check on the PC program, then every piece's tests
 npm run stage:spoke   # stage the one Windows download for Inno Setup
 ```
 
@@ -112,7 +109,7 @@ so on a PC nothing needs setting:
 | Setting | Default |
 |---|---|
 | `HANDS_ACTION_GRANT_PC_ROOT` (PC seat root for standing grants) | `%USERPROFILE%\pc-seat` |
-| `HANDS_PROTOCOL_PATH` (the spoke's own protocol file) | `%LOCALAPPDATA%\Programs\Helmian\hands-mcp\src\shared\protocol.mjs` |
+| `HANDS_PROTOCOL_PATH` (the spoke's own protocol file) | `%LOCALAPPDATA%\Programs\Scribe\hands-mcp\src\shared\protocol.mjs` |
 
 On a machine with neither variable (for example a Linux host), standing-grant
 coverage fails closed and a person decides. Signed action hashes do not
