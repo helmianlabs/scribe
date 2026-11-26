@@ -20,6 +20,6 @@ Changes from people who are not committers are reviewed before merge.
 
 ## Privacy policy
 
-See [PRIVACY.md](PRIVACY.md). In short: the spoke only connects to the Helmian
-server that the person installing it pairs it with, to receive and report work
-that person (or their Helmian agents, under their approvals) asked for.
+See [PRIVACY.md](PRIVACY.md). In short: the program only connects to the Scribe
+services it was paired with, to receive and report work
+that person (or their Scribe agents, under their approvals) asked for.
