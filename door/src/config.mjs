@@ -3,7 +3,7 @@
 //
 // Required:
 //   PUBLIC_URL             canonical https URL of the door, no trailing slash
-//                          (test: https://scribe.helmian.cloud/door)
+//                          (test: https://scribe.dairyforge.com)
 //   AUTH_PASSPHRASE        the same passphrase as the memory/hands connectors
 //   MEMORY_BACKEND_RESOURCE  canonical resource id of the memory backend
 //                            (required for the combined and scribe flavours)
