@@ -412,7 +412,7 @@ export const HANDS_GRANT_SCOPES = Object.freeze({
  *   run_powershell run-command launching seat-call.ps1            seat-call
  *   run_powershell run-command launching ollama-call.ps1 (its prompt
  *                  and out files ride the command's arg list)     seat-call
- *   edit_file      the shared protocol file inside the Helmian
+ *   edit_file      the shared protocol file inside the Scribe
  *                  install on the PC (the spoke's own rule book)  spoke-protocol
  *   run_powershell run-command New-Item -ItemType Directory into
  *                  <root>\builds\<provider>                       salvage-mkdir
@@ -427,7 +427,7 @@ export function handsScopeFor(tool, args) {
   }
   if (tool === 'edit_file') {
     const path = String(args.path || '').replaceAll('\\', '/');
-    if (/\/Programs\/Helmian\/hands-mcp\/src\/shared\/protocol\.mjs$/i.test(path)) return 'spoke-protocol';
+    if (/\/Programs\/Scribe\/hands-mcp\/src\/shared\/protocol\.mjs$/i.test(path)) return 'spoke-protocol';
     return null;
   }
   if (tool === 'run_powershell') {
@@ -656,7 +656,7 @@ export function redactSecrets(text) {
 //   ACTION_GRANT_PC_ROOT             = HANDS_ACTION_GRANT_PC_ROOT
 //                                      or %USERPROFILE%\pc-seat
 //   ACTION_GRANT_SPOKE_PROTOCOL_PATH = HANDS_PROTOCOL_PATH
-//                                      or %LOCALAPPDATA%\Programs\Helmian\hands-mcp\src\shared\protocol.mjs
+//                                      or %LOCALAPPDATA%\Programs\Scribe\hands-mcp\src\shared\protocol.mjs
 //                                      (%USERPROFILE%\AppData\Local\... when LOCALAPPDATA is unset)
 // For a profile at C:\Users\<name> these equal the values that used to be
 // hardcoded, byte for byte. Where none of the variables is set (e.g. a
@@ -670,7 +670,7 @@ const HANDS_LOCAL_APPDATA = envPath('LOCALAPPDATA') || (envPath('USERPROFILE') ?
 export const ACTION_GRANT_PC_ROOT = envPath('HANDS_ACTION_GRANT_PC_ROOT')
   || (envPath('USERPROFILE') ? winJoin(envPath('USERPROFILE'), 'pc-seat') : '');
 export const ACTION_GRANT_SPOKE_PROTOCOL_PATH = envPath('HANDS_PROTOCOL_PATH')
-  || (HANDS_LOCAL_APPDATA ? winJoin(HANDS_LOCAL_APPDATA, 'Programs', 'Helmian', 'hands-mcp', 'src', 'shared', 'protocol.mjs') : '');
+  || (HANDS_LOCAL_APPDATA ? winJoin(HANDS_LOCAL_APPDATA, 'Programs', 'Scribe', 'hands-mcp', 'src', 'shared', 'protocol.mjs') : '');
 export const ACTION_GRANT_PROVIDERS = Object.freeze(['grok', 'claude', 'mistral', 'chatgpt']);
 
 const ACTION_GRANT_SCOPES = Object.freeze({
