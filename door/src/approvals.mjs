@@ -7,6 +7,7 @@
 // approver credential (GUARD_APPROVER_TOKEN); the credential never reaches
 // the browser. Fail closed: no credential configured, no routes.
 
+import { createLockout, sourceKey } from './lockout.mjs';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import express from 'express';
 
@@ -86,10 +87,13 @@ export function approvalsRouter({ config }) {
   // approvals page with Helmian's own credential. Session secret and
   // cookie name follow the flavour so the two pages' sessions can never
   // cross-validate.
+  // Approving PC actions uses its own passphrase when APPROVALS_PASSPHRASE is set, so a passphrase that has been
+  // handed to AI connectors cannot approve actions. Unset = the connect passphrase (backward compatible).
+  const approvalsPassphrase = config.approvalsPassphrase || config.passphrase;
   const flavour = config.flavour === 'helmian' ? 'helmian' : 'scribe';
   const PRODUCT = flavour === 'helmian' ? 'Helmian' : 'Scribe';
   const COOKIE = flavour === 'helmian' ? 'helmian_appr' : 'scribe_appr';
-  const secret = createHash('sha256').update(`${flavour}-approvals:${config.passphrase}`).digest();
+  const secret = createHash('sha256').update(`${flavour}-approvals:${approvalsPassphrase}`).digest();
   const sign = (msg) => createHmac('sha256', secret).update(msg).digest('base64url');
 
   function makeSession() {
@@ -124,7 +128,7 @@ export function approvalsRouter({ config }) {
     return { status: res.status, body };
   }
 
-  const strikes = { count: 0, lockedUntil: 0 };
+  const lockout = createLockout();
 
   function loginPage(error) {
     const errorBlock = error ? `<p class="error">${escapeHtml(error)}</p>` : '';
@@ -183,19 +187,21 @@ export function approvalsRouter({ config }) {
   });
 
   router.post('/approvals/login', express.urlencoded({ extended: false }), (req, res) => {
-    if (Date.now() < strikes.lockedUntil) {
+    const src = sourceKey(req);
+    if (lockout.lockedFor(src) > 0) {
       return res.status(429).set('Content-Type', 'text/html; charset=utf-8').send(loginPage('Too many attempts. Try again in a few minutes.'));
     }
-    if (!safeEqual(String(req.body?.passphrase || ''), config.passphrase)) {
-      strikes.count += 1;
-      if (strikes.count >= 5) { strikes.lockedUntil = Date.now() + 15 * 60 * 1000; strikes.count = 0; }
+    if (!safeEqual(String(req.body?.passphrase || ''), approvalsPassphrase)) {
+      lockout.fail(src);
       return res.status(401).set('Content-Type', 'text/html; charset=utf-8').send(loginPage('Incorrect passphrase. Please try again.'));
     }
-    strikes.count = 0;
+    lockout.succeed(src);
     const s = makeSession();
     res.set('Set-Cookie', `${COOKIE}=${encodeURIComponent(s)}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${SESSION_TTL_MS / 1000}`);
     return res.redirect(302, '/approvals');
   });
+
+
 
   router.post('/approvals/:id/decide', express.urlencoded({ extended: false }), async (req, res) => {
     const session = readSession(req);

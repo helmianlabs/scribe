@@ -26,7 +26,7 @@ const FLAVOUR_TEXT = {
   },
 };
 
-function groupsFor(flavour) {
+function groupsFor(flavour, withHands = false) {
   const approvalsName = (FLAVOUR_TEXT[flavour] ?? FLAVOUR_TEXT.combined).approvalsName;
   const all = [
     ['memory.read', 'Read shared memory', 'Search and read your shared memory (Helmian Scribe) — the post office where your connected AIs leave mail for each other, and for you.'],
@@ -34,14 +34,17 @@ function groupsFor(flavour) {
     ['hands.read', 'Read-only hands', 'List, read and search files inside the folders you chose to share on your PC, and use its local AI models. Nothing changes on your PC.'],
     ['hands.act', 'Request actions on the PC', `Ask for file changes, commands and opening pages on your PC. Every single action still needs your separate approval on ${approvalsName} before it runs — approving this page runs nothing by itself.`],
   ];
-  if (flavour === 'scribe') return all.filter(([scope]) => scope.startsWith('memory.'));
+  if (flavour === 'scribe' && !withHands) return all.filter(([scope]) => scope.startsWith('memory.'));
   if (flavour === 'helmian') return all.filter(([scope]) => scope.startsWith('hands.'));
   return all;
 }
 
-export function renderConsentPage({ pendingId, clientName, error, scopes = [], flavour = 'combined' }) {
-  const text = FLAVOUR_TEXT[flavour] ?? FLAVOUR_TEXT.combined;
-  const GROUPS = groupsFor(flavour);
+export function renderConsentPage({ pendingId, clientName, error, scopes = [], flavour = 'combined', withHands = false }) {
+  const base = FLAVOUR_TEXT[flavour] ?? FLAVOUR_TEXT.combined;
+  const text = flavour === 'scribe' && withHands
+    ? { ...base, subtitle: 'One door into Scribe — your shared memory and mailbox, and the hands on your PC, under Guard. Approving connects this app to:' }
+    : base;
+  const GROUPS = groupsFor(flavour, withHands);
   const granted = GROUPS.filter(([scope]) => scopes.includes(scope));
   const items = (granted.length ? granted : GROUPS.slice(0, 1))
     .map(([, title, body]) => `<li><strong>${escapeHtml(title)}.</strong> ${escapeHtml(body)}</li>`)

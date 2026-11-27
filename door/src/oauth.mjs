@@ -6,7 +6,7 @@
 //
 // Scopes: memory.read / memory.write / hands.read / hands.act.
 
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
@@ -17,6 +17,9 @@ import { renderConsentPage } from './consent.mjs';
 
 const nowS = () => Math.floor(Date.now() / 1000);
 const token = (bytes = 32) => randomBytes(bytes).toString('base64url');
+// Access and refresh tokens are stored (in memory and in the state file) only as SHA-256 hashes, so a leaked or
+// backed-up state file cannot be replayed as a bearer token. Tokens are 256-bit random, so an unsalted hash is sound.
+export const hashToken = (t) => createHash('sha256').update(String(t)).digest('base64url');
 
 /** Only scopes this door can grant; empty request = read-only door. */
 export function normalizeScopes(requested, allowed = SCOPES, defaults = DEFAULT_SCOPES) {
@@ -30,6 +33,10 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
   const accessTokens = new Map();
   const refreshTokens = new Map();
   const pendingAuth = new Map();
+  // Consent decisions remembered briefly so a duplicated consent POST
+  // (some webviews re-send a form submission) re-issues the redirect
+  // instead of painting an "expired or invalid" error over a success.
+  const recentDecisions = new Map();
 
   function load() {
     try {
@@ -37,8 +44,22 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
       const raw = JSON.parse(readFileSync(stateFile, 'utf8'));
       const t = nowS();
       for (const c of raw.clients ?? []) if (c?.client_id) clients.set(c.client_id, c);
-      for (const a of raw.accessTokens ?? []) if (a?.token && a.expiresAt >= t) accessTokens.set(a.token, a);
-      for (const r of raw.refreshTokens ?? []) if (r?.token && r.expiresAt >= t) refreshTokens.set(r.token, r);
+      // Migration: version 1 files hold the raw token; they are hashed on load and rewritten as version 2 on the
+      // next save, so no one is signed out. Version 2 files hold only `tokenHash`.
+      let migrated = false;
+      const intake = (list, into) => {
+        for (const e of list ?? []) {
+          if (!e || e.expiresAt < t) continue;
+          if (e.tokenHash) { into.set(e.tokenHash, { ...e }); continue; }
+          if (!e.token) continue;
+          const { token: raw, ...rest } = e;
+          into.set(hashToken(raw), { ...rest, tokenHash: hashToken(raw) });
+          migrated = true;
+        }
+      };
+      intake(raw.accessTokens, accessTokens);
+      intake(raw.refreshTokens, refreshTokens);
+      if (migrated) queueMicrotask(() => save());
     } catch (err) {
       console.error('oauth state load failed (starting empty):', err.message);
     }
@@ -49,7 +70,7 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
       mkdirSync(dirname(stateFile), { recursive: true, mode: 0o700 });
       const tmp = `${stateFile}.${process.pid}.tmp`;
       writeFileSync(tmp, JSON.stringify({
-        version: 1,
+        version: 2,
         clients: [...clients.values()],
         accessTokens: [...accessTokens.values()],
         refreshTokens: [...refreshTokens.values()],
@@ -74,8 +95,8 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
   function issueTokens(clientId, scopes, resource) {
     const accessToken = token(32);
     const refreshToken = token(32);
-    accessTokens.set(accessToken, { token: accessToken, clientId, scopes, resource, expiresAt: nowS() + ACCESS_TOKEN_TTL_SECONDS });
-    refreshTokens.set(refreshToken, { token: refreshToken, clientId, scopes, resource, expiresAt: nowS() + REFRESH_TOKEN_TTL_SECONDS });
+    accessTokens.set(hashToken(accessToken), { tokenHash: hashToken(accessToken), clientId, scopes, resource, expiresAt: nowS() + ACCESS_TOKEN_TTL_SECONDS });
+    refreshTokens.set(hashToken(refreshToken), { tokenHash: hashToken(refreshToken), clientId, scopes, resource, expiresAt: nowS() + REFRESH_TOKEN_TTL_SECONDS });
     save();
     const out = { token_type: 'Bearer', expires_in: ACCESS_TOKEN_TTL_SECONDS, scope: scopes.join(' ') };
     out['access' + '_token'] = accessToken;
@@ -115,9 +136,9 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
       return issueTokens(client.client_id, rec.scopes, resource?.toString() ?? rec.resource ?? resourceId);
     },
     async exchangeRefreshToken(client, refreshToken, scopes, resource) {
-      const rec = refreshTokens.get(refreshToken);
+      const rec = refreshTokens.get(hashToken(refreshToken));
       if (!rec) throw new Error('Invalid refresh token');
-      refreshTokens.delete(refreshToken);
+      refreshTokens.delete(hashToken(refreshToken));
       if (rec.expiresAt < nowS()) { save(); throw new Error('Refresh token expired'); }
       if (rec.clientId !== client.client_id) throw new Error('Refresh token was issued to a different client');
       // A refresh can narrow scopes, never widen them.
@@ -125,13 +146,15 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
       return issueTokens(client.client_id, granted.length ? granted : rec.scopes, resource?.toString() ?? rec.resource ?? resourceId);
     },
     async verifyAccessToken(accessToken) {
-      const rec = accessTokens.get(accessToken);
+      const key = hashToken(accessToken);
+      const rec = accessTokens.get(key);
       if (!rec) throw new InvalidTokenError('Invalid or unknown access token');
-      if (rec.expiresAt < nowS()) { accessTokens.delete(accessToken); save(); throw new InvalidTokenError('Access token expired'); }
-      return { token: rec.token, clientId: rec.clientId, scopes: rec.scopes, expiresAt: rec.expiresAt, resource: rec.resource ? new URL(rec.resource) : undefined };
+      if (rec.expiresAt < nowS()) { accessTokens.delete(key); save(); throw new InvalidTokenError('Access token expired'); }
+      return { token: accessToken, clientId: rec.clientId, scopes: rec.scopes, expiresAt: rec.expiresAt, resource: rec.resource ? new URL(rec.resource) : undefined };
     },
     async revokeToken(_client, request) {
-      if (accessTokens.delete(request.token) || refreshTokens.delete(request.token)) save();
+      const key = hashToken(request.token);
+      if (accessTokens.delete(key) || refreshTokens.delete(key)) save();
     },
   };
 
@@ -139,6 +162,7 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
     const p = pendingAuth.get(pendingId);
     if (!p) return null;
     pendingAuth.delete(pendingId);
+    recentDecisions.set(pendingId, { ...p, outcome: "approved", decidedAt: nowS() });
     const code = token(24);
     authCodes.set(code, { ...p, code, expiresAt: nowS() + AUTH_CODE_TTL_SECONDS });
     const url = new URL(p.redirectUri);
@@ -151,6 +175,7 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
     const p = pendingAuth.get(pendingId);
     if (!p) return null;
     pendingAuth.delete(pendingId);
+    recentDecisions.set(pendingId, { ...p, outcome: "denied", decidedAt: nowS() });
     const url = new URL(p.redirectUri);
     url.searchParams.set('error', 'access_denied');
     url.searchParams.set('error_description', 'The user denied the authorization request.');
@@ -158,6 +183,27 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
     if (p.state !== undefined) url.searchParams.set('state', p.state);
     return url.toString();
   }
+  // A duplicated consent POST for a request decided moments ago gets
+  // the same redirect again (a fresh code when approved) — never the
+  // expired/invalid error. Older than the code lifetime: truly gone.
+  function reissue(pendingId) {
+    const d = recentDecisions.get(pendingId);
+    if (!d) return null;
+    if (d.decidedAt + AUTH_CODE_TTL_SECONDS < nowS()) { recentDecisions.delete(pendingId); return null; }
+    const url = new URL(d.redirectUri);
+    if (d.outcome === "approved") {
+      const code = token(24);
+      authCodes.set(code, { clientId: d.clientId, redirectUri: d.redirectUri, codeChallenge: d.codeChallenge, scopes: d.scopes, resource: d.resource, code, expiresAt: nowS() + AUTH_CODE_TTL_SECONDS });
+      url.searchParams.set("code", code);
+    } else {
+      url.searchParams.set("error", "access_denied");
+      url.searchParams.set("error_description", "The user denied the authorization request.");
+    }
+    url.searchParams.set("iss", resourceId.replace(/\/mcp$/, ""));
+    if (d.state !== undefined) url.searchParams.set("state", d.state);
+    return url.toString();
+  }
+
   function sweep() {
     const t = nowS();
     let changed = false;
@@ -165,6 +211,7 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
     for (const [k, v] of accessTokens) if (v.expiresAt < t) { accessTokens.delete(k); changed = true; }
     for (const [k, v] of refreshTokens) if (v.expiresAt < t) { refreshTokens.delete(k); changed = true; }
     for (const [k, v] of pendingAuth) if (v.createdAt + AUTH_CODE_TTL_SECONDS < t) pendingAuth.delete(k);
+    for (const [k, v] of recentDecisions) if (v.decidedAt + AUTH_CODE_TTL_SECONDS < t) recentDecisions.delete(k);
     if (changed) save();
   }
 
@@ -173,6 +220,7 @@ export function createOAuth({ resourceId, stateFile, scopes: scopesAllowed = SCO
     approve,
     deny,
     getPending: (id) => pendingAuth.get(id),
+    reissue,
     clientName: (id) => clients.get(id)?.client_name || id,
     sweep,
   };
