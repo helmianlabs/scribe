@@ -16,7 +16,7 @@
 // row-level security switched on by 005/006 actually binds it.
 //
 // The chain is: 000_base -> 001_librarian -> 003_search_index -> 004_flags ->
-// 005_saas -> 006_courier -> 007_stripe_events_status -> 009_plans_personal -> 010_paddle_seats.
+// 005_saas -> 006_courier -> 007_stripe_events_status -> 009_plans_personal -> 010_paddle_seats -> 011_recall_quality.
 // 002_fix_ro_role.sql is deliberately NOT in the chain:
 // it is a one-off fix for Sam's live claude_memory database (it references
 // Neon-specific roles) and is Sam's call, not a provisioning step.
@@ -40,6 +40,7 @@ const MIGRATIONS = [
   "007_stripe_events_status.sql",
   "009_plans_personal.sql",
   "010_paddle_seats.sql",
+  "011_recall_quality.sql",
 ];
 const MIG_DIR = new URL("../../../migrations/", import.meta.url);
 
@@ -50,6 +51,7 @@ const EXPECTED_TABLES = [
   "tenants", "users", "memberships", "magic_links", "sessions", "oauth_clients", "oauth_pending",
   "oauth_codes", "oauth_tokens", "api_keys", "stripe_events", "paddle_events", "usage_daily", "tenant_storage",
   "flags", "agent_messages", "agent_message_reads", "agent_directory",
+  "memory_supersessions", "memory_recalls",
 ];
 const EXPECTED_VIEWS = ["memory_current_filing", "memory_unsorted", "librarian_active_rules"];
 // Tables 005/006 put under FORCE row-level security with a tenant_isolation policy.
@@ -57,6 +59,7 @@ const RLS_TABLES = [
   "conversations", "messages", "projects", "librarian_settings", "librarian_rules",
   "memory_filings", "memory_moves", "flags", "usage_daily", "tenant_storage",
   "agent_messages", "agent_message_reads", "agent_directory",
+  "memory_supersessions", "memory_recalls",
 ];
 
 const fail = (msg) => { console.error(`\nPROVISIONING FAILED: ${msg}`); process.exit(1); };
@@ -159,6 +162,8 @@ try {
   if (!(await priv("tenants", "SELECT"))) problems.push("memory_app lacks SELECT on tenants (control plane)");
   if (!(await priv("agent_messages", "INSERT"))) problems.push("memory_app lacks INSERT on agent_messages (Courier)");
   if (!(await priv("messages_id_seq", "USAGE", "sequence"))) problems.push("memory_app lacks USAGE on messages_id_seq");
+  if (!(await priv("memory_recalls", "INSERT"))) problems.push("memory_app lacks INSERT on memory_recalls (011_recall_quality.sql)");
+  if (!(await priv("memory_supersessions", "INSERT"))) problems.push("memory_app lacks INSERT on memory_supersessions (011_recall_quality.sql)");
   if (!(await priv("schema_migrations", "SELECT"))) problems.push("memory_app lacks SELECT on schema_migrations (the server's boot-time drift check reads it; re-run provisioning in apply mode to grant it)");
 
   if (tables.has("tenants")) {
@@ -169,13 +174,15 @@ try {
   if (ext !== 1) problems.push("extension pg_trgm missing (003_search_index.sql)");
   const idx = (await client.query("SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname='public' AND indexname='messages_text_trgm'")).rows[0].n;
   if (idx !== 1) problems.push("index messages_text_trgm missing (003_search_index.sql)");
+  const fts = (await client.query("SELECT count(*)::int AS n FROM pg_indexes WHERE schemaname='public' AND indexname='messages_text_fts'")).rows[0].n;
+  if (fts !== 1) problems.push("index messages_text_fts missing (011_recall_quality.sql)");
 
   if (problems.length) {
     console.error("\nVerification found problems:");
     for (const p of problems) console.error(`  - ${p}`);
     fail(`${problems.length} verification problem(s). The database is NOT fully provisioned; do not point the server at it.`);
   }
-  console.log(`\nVerified: ${EXPECTED_TABLES.length} tables, ${EXPECTED_VIEWS.length} views, RLS + tenant_isolation on ${RLS_TABLES.length} tables, memory_app grants, 'self' tenant, pg_trgm.`);
+  console.log(`\nVerified: ${EXPECTED_TABLES.length} tables, ${EXPECTED_VIEWS.length} views, RLS + tenant_isolation on ${RLS_TABLES.length} tables, memory_app grants, 'self' tenant, pg_trgm, full-text index.`);
   console.log("Provisioning complete. The server connects as memory_app, e.g.:");
   console.log("  DATABASE_URL=postgres://memory_app:<MEMORY_APP_PASSWORD>@<host>:5432/<db>");
   console.log("Next: copy server.src/app/.env.example to .env, fill it in, and follow docs/PROVISIONING.md.");

@@ -82,8 +82,9 @@ Limits are enforced in `saas/memory.ts` (memory count, stored bytes via the per-
 | `007_stripe_events_status.sql` | **SaaS database only** | `stripe_events` apply tracking (`apply_status`/`apply_error`/`applied_at`/`attempts`) so a webhook whose apply fails stays retryable instead of being swallowed as a duplicate |
 | `009_plans_personal.sql` | **SaaS database only** | plan id `pro` → `personal` (CHECK widened), `tenant_storage` byte counter with RLS (backfilled from existing messages), grants for `memory_app`. Down restores `pro` and drops the counter. (008 is the graph migration; it is not in the SaaS chain.) |
 | `010_paddle_seats.sql` | **SaaS database only** | `tenants.seats`, `payment_provider`, `paddle_customer_id`, `paddle_subscription_id`, `paddle_event_at`; `paddle_events` webhook ledger (same apply tracking as `stripe_events`). Additive. |
+| `011_recall_quality.sql` | **SaaS database only** | Recall quality: expression GIN full-text index `messages_text_fts` (ranked search), `memory_supersessions` (a correction replaces an older memory; nothing is edited or deleted, history kept), `memory_recalls` (read/confirm log used to strengthen recalled memories and let unused ones fade in ranking). Both tables tenant-scoped with FORCE RLS; `memory_app` gets SELECT/INSERT/DELETE. Additive. |
 
-Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009 → 010.
+Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009 → 010 → 011.
 
 Moving Sam's archive into the hosted service later = export from `claude_memory`, import as tenant `self` (or a new tenant). Not built yet.
 

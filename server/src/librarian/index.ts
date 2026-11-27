@@ -10,3 +10,5 @@ export * from './trail.ts';
 export * from './repair.ts';
 export * from './graph.ts';
 export { ENTITY_RULE_IDS, ENTITY_SHELVES, withoutEntityShelves } from './entities.ts';
+export { GENERIC_VOCAB, type VocabPack } from './vocab.ts';
+export { OWNER_VOCAB } from './vocabOwner.ts';

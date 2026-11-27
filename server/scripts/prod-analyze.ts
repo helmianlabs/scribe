@@ -4,7 +4,8 @@
  * plus short unsorted previews when SHOW=n is set. Never prints connection details.
  */
 import pg from 'pg';
-import { classify, classifyBatch, distribution, PRESETS, type MemoryItem } from '../src/librarian/index.ts';
+import { classify, classifyBatch, distribution, presetsFor, type MemoryItem } from '../src/librarian/index.ts';
+const PRESETS = presetsFor(process.env.LIBRARIAN_VOCAB, 'owner'); // owner's ops script: owner pack unless LIBRARIAN_VOCAB=generic
 const book = PRESETS[(process.env.PRESET ?? 'D') as 'A' | 'B' | 'C' | 'D'];
 const c = new pg.Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
 await c.connect();

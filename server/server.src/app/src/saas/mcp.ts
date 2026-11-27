@@ -8,6 +8,7 @@ import type { Db } from "./db.js";
 import type { Tenant } from "./accounts.js";
 import { planFor, LimitError, type Plan } from "./plans.js";
 import { countCall, searchMemory, saveMemory, getMessageById, TenantLibrarian } from "./memory.js";
+import { DEFAULT_MAX_TOKENS, historyOf, logRecall, supersede, SupersedeError, type RerankHook } from "./recall.js";
 import { prepareContent, findingsToFlags, recordFlags, summarize } from "../flags/service.js";
 import { listFlags } from "../flags/store.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
@@ -23,7 +24,7 @@ export function alertTargetFor(t: Tenant, publicUrl: string): AlertTarget {
 const json = (o: Record<string, unknown>) => ({ content: [{ type: "text" as const, text: JSON.stringify(o) }], structuredContent: o });
 const fail = (msg: string) => ({ content: [{ type: "text" as const, text: msg }], isError: true });
 
-export interface McpCtx { db: Db; tenant: Tenant; scopes: string[]; publicUrl: string; limitsOverride?: Record<string, Partial<Plan>>; clientId?: string; clientName?: string | null; }
+export interface McpCtx { db: Db; tenant: Tenant; scopes: string[]; publicUrl: string; limitsOverride?: Record<string, Partial<Plan>>; clientId?: string; clientName?: string | null; /** Optional search rerank hook (e.g. embeddings). Off unless the app is built with one. */ rerank?: RerankHook; }
 
 export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   const { db, tenant, scopes } = ctx;
@@ -45,24 +46,26 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
 
   server.registerTool("search_memory", {
     title: "Search Memory",
-    description: "Search this account's Helmian Scribe memory (case-insensitive substring), newest first. Returns message_id, notebook, sender, time and a snippet.",
+    description: `Search this account's Helmian Scribe memory. Best match first (full-text, word stems; exact-substring matches still count). Each result has a snippet centred on the match; whole=true means the snippet is the entire memory, otherwise read_memory gets the rest. Near-duplicates are folded (similar_hidden). Memories replaced by a newer one are hidden unless include_history. The response stays within max_tokens (default ${DEFAULT_MAX_TOKENS}).`,
     inputSchema: {
-      query: z.string().min(1).max(500),
+      query: z.string().min(1).max(500).describe("A few words or a name; the best matches come first."),
       since: z.string().optional().describe("ISO-8601 lower bound"),
       limit: z.number().int().min(1).max(200).default(20),
+      max_tokens: z.number().int().min(100).max(8000).optional().describe(`Token budget for the response (default ${DEFAULT_MAX_TOKENS}).`),
+      include_history: z.boolean().optional().describe("Also return memories that were replaced by newer ones."),
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async (p: { query: string; since?: string; limit?: number }) => run("call", async (q) => {
-    let rows = await searchMemory(q, tenant.id, { query: p.query, since: p.since, limit: p.limit ?? 20 });
-    const total = rows.length;
+  }, async (p: { query: string; since?: string; limit?: number; max_tokens?: number; include_history?: boolean }) => run("call", async (q) => {
+    const found = await searchMemory(q, tenant.id, { query: p.query, since: p.since, limit: p.limit ?? 20, maxTokens: p.max_tokens, includeHistory: p.include_history, rerank: ctx.rerank });
+    let rows = found.results;
     while (JSON.stringify(rows).length > CHARACTER_LIMIT && rows.length > 1) rows = rows.slice(0, Math.floor(rows.length / 2));
-    return { total, returned: rows.length, truncated: rows.length < total, results: rows };
+    return { total: found.total_matches, returned: rows.length, truncated: rows.length < Number.parseInt(String(found.total_matches), 10), est_tokens: found.est_tokens, results: rows };
   }));
 
   const READ_MEMORY_PAGE = 8000;
   server.registerTool("read_memory", {
     title: "Read a Full Memory by ID",
-    description: `Fetch the complete text of one memory by its stable id. search_memory returns only the first 300 characters of each message; this tool returns the whole letter. Use it after search_memory: take the "message_id" from a search result (or from save_memory) and read the full message. Responses carry at most ${READ_MEMORY_PAGE} characters of text; if a response includes next_offset, call again with offset set to that value to fetch the next chunk. Returns { id, sender, created_at, conversation_name, text, text_length, offset, returned_chars, next_offset }; next_offset is null when the whole message has been returned. Read-only.`,
+    description: `Fetch the complete text of one memory by its stable id. search_memory returns a 300-character snippet (whole=false means there is more); this tool returns the whole letter. Reads are logged to help rank memories. Use it after search_memory: take the "message_id" from a search result (or from save_memory) and read the full message. Responses carry at most ${READ_MEMORY_PAGE} characters of text; if a response includes next_offset, call again with offset set to that value to fetch the next chunk. Returns { id, sender, created_at, conversation_name, text, text_length, offset, returned_chars, next_offset }; next_offset is null when the whole message has been returned. Read-only.`,
     inputSchema: {
       message_id: z.number().int().min(1).describe("The stable numeric message id, as shown in search_memory results or returned by save_memory."),
       offset: z.number().int().min(0).default(0).describe("Character offset for very long messages. If a previous read_memory call returned next_offset, pass that value to fetch the next chunk."),
@@ -75,6 +78,8 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     const offset = Math.min(p.offset ?? 0, total);
     const chunk = msg.text.slice(offset, offset + READ_MEMORY_PAGE);
     const nextOffset = offset + chunk.length < total ? offset + chunk.length : null;
+    if (offset === 0) await logRecall(q, tenant.id, msg.id, "read", ctx.clientName ?? null);
+    const history = await historyOf(q, tenant.id, msg.id);
     return {
       id: msg.id,
       sender: msg.sender,
@@ -85,6 +90,8 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
       offset,
       returned_chars: chunk.length,
       next_offset: nextOffset,
+      ...(history.superseded_by ? { superseded_by: history.superseded_by, note_history: `Replaced by memory ${history.superseded_by.message_id}; read that one for the current version.` } : {}),
+      ...(history.replaces.length ? { replaces: history.replaces } : {}),
       ...(nextOffset !== null
         ? { note: `This message is ${total} characters long. You are reading characters ${offset}–${offset + chunk.length - 1}. Call read_memory again with offset ${nextOffset} to continue.` }
         : {}),
@@ -99,14 +106,18 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
       source: z.string().min(1).max(40).regex(/^[a-z0-9][a-z0-9._-]*$/i).describe("Which AI/app is writing, e.g. 'claude.ai', 'grok'."),
       category: z.string().min(1).max(80).regex(/^[^\r\n]+$/).optional(),
       tags: z.array(z.string().min(1).max(30)).max(10).optional(),
+      replaces: z.array(z.number().int().min(1)).max(10).optional().describe("Ids of older memories this one corrects or updates. They stay in history but drop out of search."),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async (p: { content: string; source: string; category?: string; tags?: string[] }) => {
+  }, async (p: { content: string; source: string; category?: string; tags?: string[]; replaces?: number[] }) => {
     if (!canWrite) return needWrite("save_memory");
     const prepared = await prepareContent(p.content);
     const tags = p.tags?.map((t) => scanText(t).redacted);
     return run("save", async (q) => {
+      for (const id of p.replaces ?? []) if (!(await getMessageById(q, tenant.id, id))) throw new SupersedeError(`replaces: no memory with id ${id}; nothing was saved.`);
       const saved = await saveMemory(q, tenant.id, plan, { content: prepared.text, source: p.source, category: p.category ? scanText(p.category).redacted : undefined, tags });
+      const replaced: number[] = [];
+      for (const id of p.replaces ?? []) { await supersede(q, tenant.id, id, saved.message_id, p.source); replaced.push(id); }
       let filing: Record<string, unknown> = {};
       try {
         const f = await new TenantLibrarian(q, tenant.id, {}, plan).fileSaved({ id: saved.message_id, text: saved.text, sender: p.source, source: p.source, conversationName: saved.conversation_name });
@@ -114,7 +125,31 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
       } catch (e) { filing = { filed_in: "unsorted", filing_reason: `Librarian error: ${(e as Error).message}`, filing_recorded: false }; }
       const flagged = await recordFlags(q, tenant.id, findingsToFlags(prepared.findings, { source_ai: p.source, reporter: "server", message_id: saved.message_id }), alertTargetFor(tenant, ctx.publicUrl));
       const { text: _t, ...rest } = saved;
-      return { saved: true, ...rest, ...filing, redactions: prepared.redactions, flags: summarize(prepared.findings), flag_ids: flagged.flags.map((f) => f.id), alert: flagged.alert };
+      return { saved: true, ...rest, ...(replaced.length ? { replaces: replaced } : {}), ...filing, redactions: prepared.redactions, flags: summarize(prepared.findings), flag_ids: flagged.flags.map((f) => f.id), alert: flagged.alert };
+    });
+  });
+
+  server.registerTool("supersede_memory", {
+    title: "Mark a Memory as Replaced",
+    description: "Say that a newer memory replaces an older one (a correction or update). The old one is kept in history but hidden from search; read_memory on it points to the new one. Requires memory.write.",
+    inputSchema: { old_message_id: z.number().int().min(1), new_message_id: z.number().int().min(1), reason: z.string().max(300).optional() },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (p: { old_message_id: number; new_message_id: number; reason?: string }) => {
+    if (!canWrite) return needWrite("supersede_memory");
+    return run("save", (q) => supersede(q, tenant.id, p.old_message_id, p.new_message_id, ctx.clientName ?? "mcp", p.reason));
+  });
+
+  server.registerTool("confirm_memory", {
+    title: "Confirm a Memory Is Still True",
+    description: "Record that a memory is still correct. Confirmed and often-read memories rank higher; unused ones slowly rank lower (never deleted). Requires memory.write.",
+    inputSchema: { message_id: z.number().int().min(1) },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async (p: { message_id: number }) => {
+    if (!canWrite) return needWrite("confirm_memory");
+    return run("call", async (q) => {
+      if (!(await getMessageById(q, tenant.id, p.message_id))) return { error: `No memory with id ${p.message_id}.` };
+      await logRecall(q, tenant.id, p.message_id, "confirm", ctx.clientName ?? null);
+      return { confirmed: true, message_id: p.message_id };
     });
   });
 

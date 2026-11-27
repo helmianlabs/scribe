@@ -379,7 +379,97 @@ var ENTITY_RULE_IDS = new Set(
 );
 
 // src/librarian/vocab.ts
-var PROJECTS = {
+var PROJECTS = {};
+var PRODUCT_CONTEXT = [
+  "app",
+  "apps",
+  "platform",
+  "pilot",
+  "pitch",
+  "demo",
+  "investor",
+  "investors",
+  "customer",
+  "customers",
+  "dashboard",
+  "backend",
+  "frontend",
+  "feature",
+  "features",
+  "software",
+  "saas",
+  "mvp",
+  "prototype",
+  "startup",
+  "product",
+  "licensing",
+  "contract",
+  "revenue",
+  "pricing",
+  "sell",
+  "selling",
+  "database",
+  "api",
+  "repo",
+  "deploy",
+  "app store",
+  "play store",
+  "integration",
+  "market",
+  "competitor",
+  "competitors",
+  "metrics",
+  "automation",
+  "workflow",
+  "endpoint",
+  "schema",
+  "ui",
+  "pitch deck",
+  "founder",
+  "company",
+  "business",
+  "sales",
+  "partnership",
+  "roi",
+  "spec",
+  "code",
+  "commit",
+  "website",
+  "test",
+  "bug",
+  "fix",
+  "release",
+  "version",
+  "vendor"
+];
+var FINANCE = ["invoice", "invoices", "payment", "paid", "refund", "stripe", "bank", "budget", "tax", "taxes", "irs", "payroll", "expense", "receipt", "subscription", "billing", "price", "pricing", "revenue", "profit", "loan", "credit card", "owe", "owed", "paddle", "lemon squeezy", "gumroad", "dollars"];
+var PERSONAL = ["family", "wife", "husband", "partner", "kids", "son", "daughter", "mom", "dad", "parents", "doctor", "dentist", "vet", "dog", "cat", "birthday", "anniversary", "wedding", "vacation", "holiday", "health", "appointment", "brother", "sister", "cousin", "girlfriend", "boyfriend", "feelings", "stress", "stressed", "tired", "sleep", "exhausted", "my life", "groceries"];
+var CODE_WORDS = ["repo", "github", "branch", "deploy", "vercel", "docker", "migration", "schema", "typescript", "javascript", "python", "api", "endpoint", "bug", "refactor", "build", "pnpm", "npm", "postgres", "neon", "sql", "mcp", "oauth", "worktree"];
+var MARKETING = ["linkedin", "facebook", "instagram", "tiktok", "youtube", "reel", "reels", "newsletter", "seo", "outreach", "campaign", "landing page", "waitlist", "product hunt"];
+var RESEARCH = ["research", "competitor", "compare", "comparison", "market", "report", "study", "pricing research"];
+var PLANNING = ["plan", "roadmap", "todo", "to-do", "next step", "next steps", "punch list", "handoff", "spec", "decision", "decided"];
+var DESIGN = ["design", "mockup", "logo", "print file", "artwork", "font", "color", "screenshot", "ui", "ux"];
+var AI_TOOLS = ["claude", "claude code", "chatgpt", "gpt", "gemini", "grok", "codex", "cursor", "midjourney", "llm", "prompt", "prompts", "agent", "agents", "subagent", "voice chat", "tts", "elevenlabs", "handoff", "context window"];
+var GENERIC_VOCAB = {
+  id: "generic",
+  projects: PROJECTS,
+  productContext: PRODUCT_CONTEXT,
+  jobTalk: [],
+  jobWeak: [],
+  aiNicknames: [],
+  finance: FINANCE,
+  personal: PERSONAL,
+  codeWords: CODE_WORDS,
+  marketing: MARKETING,
+  research: RESEARCH,
+  planning: PLANNING,
+  design: DESIGN,
+  aiTools: AI_TOOLS,
+  presetDDescription: 'Personal, finance, code, general business, AI tools, people, places and organisations. Add a shelf for each of your own businesses or projects by teaching it (add_rule "anything about Acme goes to acme", or move a memory). Infrastructure names (hosts, paths, cloud project ids) are ignored.'
+};
+
+// src/librarian/vocabOwner.ts
+var PROJECTS2 = {
   "faith-n-light": { name: "Faith N Light", words: ["faith n light", "faith and light", "faith & light", "faithnlight", "fnl", "printify", "tumbler", "beanie", "dad cap", "kjv", "scripture", "meta shop"] },
   helmian: { name: "Helmian", words: ["helmian", "helmion", "helium runner", "herald", "bridge device", "runner box"] },
   "dairyforge-firstuse": {
@@ -397,7 +487,7 @@ var PROJECTS = {
   caldmere: { name: "Caldmere", words: ["caldmere", "unity", "blender", "centaur"] },
   thinkinbuddy: { name: "Thinkinbuddy", words: ["thinkinbuddy", "thinking buddy", "site diary", "actionable app"] }
 };
-var PRODUCT_CONTEXT = [
+var PRODUCT_CONTEXT2 = [
   "app",
   "apps",
   "apk",
@@ -585,39 +675,37 @@ var JOB_TALK = [
   "boss",
   "supervisor"
 ];
-var FINANCE = ["invoice", "invoices", "payment", "paid", "refund", "stripe", "bank", "budget", "tax", "taxes", "irs", "payroll", "expense", "receipt", "subscription", "billing", "price", "pricing", "revenue", "profit", "loan", "credit card", "owe", "owed", "paddle", "lemon squeezy", "gumroad", "dollars"];
-var PERSONAL = ["family", "wife", "kids", "son", "daughter", "mom", "dad", "doctor", "diabetes", "insulin", "blood sugar", "vet", "dog", "birthday", "church", "prayer", "vacation", "health", "appointment", "banner", "brother", "sister", "cousin", "girlfriend", "feelings", "mental", "stress", "stressed", "tired", "sleep", "exhausted", "drive home", "my life", "god", "jesus", "faith in god", "carnival"];
-var CODE_WORDS = ["repo", "github", "branch", "deploy", "vercel", "docker", "migration", "schema", "typescript", "javascript", "python", "api", "endpoint", "bug", "refactor", "build", "pnpm", "npm", "postgres", "neon", "sql", "hetzner", "caddy", "mcp", "oauth", "worktree"];
-var MARKETING = ["linkedin", "facebook", "instagram", "tiktok", "youtube", "reel", "reels", "newsletter", "seo", "outreach", "campaign", "landing page", "waitlist", "product hunt"];
-var RESEARCH = ["research", "competitor", "compare", "comparison", "market", "report", "study", "pricing research"];
-var PLANNING = ["plan", "roadmap", "todo", "to-do", "next step", "next steps", "punch list", "handoff", "spec", "decision", "decided"];
-var DESIGN = ["design", "mockup", "logo", "print file", "artwork", "font", "color", "screenshot", "ui", "ux"];
-var AI_TOOLS = ["claude", "claude code", "chatgpt", "gpt", "gemini", "grok", "jarvis", "codex", "cursor", "muse", "midjourney", "llm", "prompt", "prompts", "agent", "agents", "subagent", "voice chat", "tts", "elevenlabs", "handoff", "context window", "/clear", "clear command"];
+var FINANCE2 = ["invoice", "invoices", "payment", "paid", "refund", "stripe", "bank", "budget", "tax", "taxes", "irs", "payroll", "expense", "receipt", "subscription", "billing", "price", "pricing", "revenue", "profit", "loan", "credit card", "owe", "owed", "paddle", "lemon squeezy", "gumroad", "dollars"];
+var PERSONAL2 = ["family", "wife", "kids", "son", "daughter", "mom", "dad", "doctor", "diabetes", "insulin", "blood sugar", "vet", "dog", "birthday", "church", "prayer", "vacation", "health", "appointment", "banner", "brother", "sister", "cousin", "girlfriend", "feelings", "mental", "stress", "stressed", "tired", "sleep", "exhausted", "drive home", "my life", "god", "jesus", "faith in god", "carnival"];
+var CODE_WORDS2 = ["repo", "github", "branch", "deploy", "vercel", "docker", "migration", "schema", "typescript", "javascript", "python", "api", "endpoint", "bug", "refactor", "build", "pnpm", "npm", "postgres", "neon", "sql", "hetzner", "caddy", "mcp", "oauth", "worktree"];
+var MARKETING2 = ["linkedin", "facebook", "instagram", "tiktok", "youtube", "reel", "reels", "newsletter", "seo", "outreach", "campaign", "landing page", "waitlist", "product hunt"];
+var RESEARCH2 = ["research", "competitor", "compare", "comparison", "market", "report", "study", "pricing research"];
+var PLANNING2 = ["plan", "roadmap", "todo", "to-do", "next step", "next steps", "punch list", "handoff", "spec", "decision", "decided"];
+var DESIGN2 = ["design", "mockup", "logo", "print file", "artwork", "font", "color", "screenshot", "ui", "ux"];
+var AI_TOOLS2 = ["claude", "claude code", "chatgpt", "gpt", "gemini", "grok", "jarvis", "codex", "cursor", "muse", "midjourney", "llm", "prompt", "prompts", "agent", "agents", "subagent", "voice chat", "tts", "elevenlabs", "handoff", "context window", "/clear", "clear command"];
+var JOB_WEAK = ["milk", "hauling", "hauler", "haulers", "milk hauler", "milk pickup", "tanker", "dairy", "dairyman", "dairymen", "freight", "loads", "trucking", "dispatch"];
+var AI_NICKNAMES = ["big sister", "big brother", "big brother claude", "big sister claude"];
+var OWNER_VOCAB = {
+  id: "owner",
+  projects: PROJECTS2,
+  productContext: PRODUCT_CONTEXT2,
+  jobTalk: JOB_TALK,
+  jobWeak: JOB_WEAK,
+  aiNicknames: AI_NICKNAMES,
+  finance: FINANCE2,
+  personal: PERSONAL2,
+  codeWords: CODE_WORDS2,
+  marketing: MARKETING2,
+  research: RESEARCH2,
+  planning: PLANNING2,
+  design: DESIGN2,
+  aiTools: AI_TOOLS2,
+  presetDDescription: "Personal, finance, code, and one shelf per business (Faith N Light, Helmian, DairyForge/FirstUse, Forge TMS, ...). A business name files on its own; its everyday work words (milk, hauling, loads, dispatch) need product context too, otherwise driving and hauling talk is Personal. Infrastructure names (hosts, paths, Neon project ids) are ignored."
+};
 
 // src/librarian/presets.ts
-var allWords = (p) => [...p.words, ...p.weak ?? []];
-var STRONG_WORDS = Object.values(PROJECTS).flatMap((p) => p.words);
-var JOB_WEAK = ["milk", "hauling", "hauler", "haulers", "milk hauler", "milk pickup", "tanker", "dairy", "dairyman", "dairymen", "freight", "loads", "trucking", "dispatch"];
 var FINANCE_STRICT = ["invoice", "invoices", "payment", "payments", "paid", "refund", "receipt", "payroll", "tax", "taxes", "irs", "expense", "expenses", "bank", "loan", "owe", "owed", "dollars", "budget"];
-var AI_NICKNAMES = ["big sister", "big brother", "big brother claude", "big sister claude"];
-var projectRules = (priority, prefix = "", strongOnly = false) => Object.entries(PROJECTS).map(([slug2, p]) => ({
-  id: `content.project.${slug2}`,
-  layer: "content",
-  when: { anyWords: strongOnly ? p.words : allWords(p) },
-  category: `${prefix}${slug2}`,
-  addTags: [slug2],
-  priority,
-  description: `Mentions ${p.name}.`
-}));
-var projectNotebookRules = (priority, prefix = "", strongOnly = false) => Object.entries(PROJECTS).map(([slug2, p]) => ({
-  id: `content.notebook.${slug2}`,
-  layer: "content",
-  when: { conversationWords: strongOnly ? p.words : allWords(p) },
-  category: `${prefix}${slug2}`,
-  addTags: [slug2],
-  priority,
-  description: `The conversation it came from is about ${p.name}.`
-}));
+var allWords = (p) => [...p.words, ...p.weak ?? []];
 var tagRule = (cat, tags) => ({
   id: `tag.${cat}`,
   layer: "content",
@@ -635,84 +723,6 @@ var topic = (id, cat, words, priority, description, addTags = []) => ({
   description,
   addTags
 });
-var sharedTagRules = [
-  { id: "tag-only.money", layer: "content", when: { anyWords: FINANCE }, addTags: ["money"], priority: 50, description: "Talks about money." },
-  { id: "tag-only.personal", layer: "content", when: { anyWords: PERSONAL }, addTags: ["personal"], priority: 50, description: "Personal life." },
-  { id: "tag-only.decision", layer: "content", when: { anyWords: ["decided", "decision", "we will", "going with"] }, addTags: ["decision"], priority: 50, description: "Records a decision." }
-];
-var projectCats = Object.entries(PROJECTS).map(([slug2, p]) => ({ slug: slug2, name: p.name }));
-var PRESET_A = {
-  id: "preset-a",
-  name: "A \u2014 By project",
-  description: "Every memory goes in the project it is about. Anything not about a project goes to General, or the unsorted tray.",
-  categories: [...projectCats, { slug: "personal", name: "Personal" }, { slug: "general", name: "General" }],
-  rules: [
-    ...Object.keys(PROJECTS).map((slug2) => tagRule(slug2, [slug2, PROJECTS[slug2].name])),
-    ...projectRules(600),
-    ...projectNotebookRules(550),
-    topic("content.personal", "personal", PERSONAL, 300, "Personal life, not a project."),
-    { id: "shape.code.general", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "general", priority: 200, description: "Technical item with no project named." },
-    ...sharedTagRules
-  ]
-};
-var PRESET_B = {
-  id: "preset-b",
-  name: "B \u2014 By kind of work",
-  description: "Sorted by what kind of work it is: code, money, marketing, research, planning, design, personal.",
-  categories: [
-    { slug: "code", name: "Code" },
-    { slug: "money", name: "Money" },
-    { slug: "marketing", name: "Marketing" },
-    { slug: "research", name: "Research" },
-    { slug: "planning", name: "Planning" },
-    { slug: "design", name: "Design" },
-    { slug: "personal", name: "Personal" }
-  ],
-  rules: [
-    tagRule("code", ["code"]),
-    tagRule("money", ["money", "finance"]),
-    tagRule("personal", ["personal"]),
-    { id: "shape.code", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "code", priority: 450, description: "It is code, a PR, a commit, or an error." },
-    topic("content.money", "money", FINANCE, 420, "Talks about money (invoices, payments, pricing, tax).", ["money"]),
-    topic("content.personal", "personal", PERSONAL, 410, "Personal life."),
-    topic("content.marketing", "marketing", MARKETING, 400, "Marketing, social, or outreach."),
-    topic("content.design", "design", DESIGN, 390, "Design or visuals."),
-    topic("content.research", "research", RESEARCH, 380, "Research or a comparison."),
-    topic("content.code-words", "code", CODE_WORDS, 370, "Technical words (repo, deploy, database...)."),
-    topic("content.planning", "planning", PLANNING, 360, "A plan, spec, handoff or decision."),
-    ...projectRules(10).map((r) => ({ ...r, category: void 0, id: r.id.replace("content.", "tag-only.") })),
-    ...sharedTagRules
-  ]
-};
-var PRESET_C = {
-  id: "preset-c",
-  name: "C \u2014 Work / personal first, then project",
-  description: "Personal life is split off first. Work is then filed by project (work/<project>), or work/general.",
-  categories: [
-    { slug: "personal", name: "Personal" },
-    { slug: "personal/money", name: "Personal money", parent: "personal" },
-    { slug: "work/general", name: "Work \u2014 general", parent: "work" },
-    ...projectCats.map((c) => ({ slug: `work/${c.slug}`, name: `Work \u2014 ${c.name}`, parent: "work" }))
-  ],
-  rules: [
-    tagRule("personal", ["personal"]),
-    { id: "content.personal", layer: "content", when: { anyWords: PERSONAL, noneWords: Object.values(PROJECTS).flatMap(allWords) }, category: "personal", priority: 700, description: "Personal life with no project named." },
-    ...projectRules(600, "work/"),
-    ...projectNotebookRules(550, "work/"),
-    { id: "shape.work", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "work/general", priority: 200, description: "Technical work with no project named." },
-    topic("content.work-words", "work/general", [...CODE_WORDS, ...MARKETING, ...FINANCE], 150, "Work words with no project named."),
-    ...sharedTagRules
-  ]
-};
-var projectContextRules = (priority) => Object.entries(PROJECTS).filter(([, p]) => p.weak?.length).map(([slug2, p]) => ({
-  id: `content.project-context.${slug2}`,
-  layer: "content",
-  when: { anyWords: p.weak, withAny: PRODUCT_CONTEXT },
-  category: slug2,
-  addTags: [slug2],
-  priority: priority(slug2),
-  description: `Talks about ${p.name}'s line of work and about the product or business side of it.`
-}));
 var INFRA_IGNORE = [
   { pattern: String.raw`\b(?:https?|postgres(?:ql)?|ssh|git)://\S+`, why: "URLs and connection strings." },
   { pattern: String.raw`\b[\w.+-]+@[\w-]+(?:\.[\w-]+)+`, why: "Email addresses and user@host logins." },
@@ -723,47 +733,163 @@ var INFRA_IGNORE = [
   { pattern: String.raw`\b(?:[a-z]+-[a-z]+)-\d{6,}\b`, why: "Cloud project ids like misty-lake-10000001." },
   { pattern: String.raw`\b(?:project|database|db|bucket|container|image|branch|schema)\s*[:=]\s*["'\u0060]?[\w-]+["'\u0060]?`, why: "key=value infra settings." }
 ];
-var PRESET_D = {
-  id: "preset-d",
-  name: "D \u2014 All-round default",
-  description: "Personal, finance, code, and one shelf per business (Faith N Light, Helmian, DairyForge/FirstUse, Forge TMS, ...). A business name files on its own; its everyday work words (milk, hauling, loads, dispatch) need product context too, otherwise driving and hauling talk is Personal. Infrastructure names (hosts, paths, Neon project ids) are ignored.",
-  categories: [
-    { slug: "personal", name: "Personal" },
-    { slug: "finance", name: "Finance" },
-    { slug: "code", name: "Code" },
-    { slug: "business", name: "Business (general)" },
-    { slug: "ai-tools", name: "AI tools & agents" },
-    { slug: "people", name: "People" },
-    { slug: "places", name: "Places" },
-    { slug: "organizations", name: "Organizations & customers" },
-    ...projectCats.map((c) => ({ ...c, parent: "business" }))
-  ],
-  ignore: INFRA_IGNORE,
-  rules: [
-    tagRule("personal", ["personal"]),
-    tagRule("finance", ["finance", "money"]),
-    tagRule("code", ["code"]),
-    ...Object.keys(PROJECTS).map((slug2) => tagRule(slug2, [slug2, PROJECTS[slug2].name])),
-    // Personal beats project only when no business is named.
-    { id: "content.personal", layer: "content", when: { anyWords: PERSONAL, noneWords: [...STRONG_WORDS, ...AI_NICKNAMES] }, category: "personal", priority: 650, description: "Personal life, no business named." },
-    ...projectRules(600, "", true),
-    // DairyForge's product context outranks a notebook name; generic trucking-product talk (Forge TMS) sits just
-    // below notebooks, so inside a DairyForge conversation it stays DairyForge.
-    ...projectContextRules((slug2) => slug2 === "forge-tms" ? 545 : 590),
-    // Money outranks the day job: "invoice from <a trucking company>" is Finance, not hauling talk.
-    { id: "content.finance-job", layer: "content", when: { anyWords: FINANCE_STRICT, withAny: [...JOB_TALK, ...JOB_WEAK], noneWords: [...STRONG_WORDS, ...AI_NICKNAMES] }, category: "finance", priority: 568, description: "Money (invoice, payment, tax, ...) mixed with day-job words: money outranks the day job.", addTags: ["money", "job"] },
-    { id: "content.job-talk", layer: "content", when: { shape: ["chat"], anyWords: [...JOB_TALK, ...JOB_WEAK], noneWords: [...STRONG_WORDS, ...PRODUCT_CONTEXT] }, category: "personal", priority: 560, description: "Driving and hauling talk (the day job), with no business named and nothing about the product.", addTags: ["job"] },
-    ...projectNotebookRules(550, "", true),
-    topic("content.finance", "finance", FINANCE, 400, "Money with no business named (invoices, payments, tax).", ["money"]),
-    { id: "shape.code", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "code", priority: 200, description: "It is code, a PR, a commit, or an error, with no business named." },
-    topic("content.code-words", "code", CODE_WORDS, 190, "Technical words, no business named."),
-    topic("content.business", "business", [...MARKETING, "customer", "customers", "client", "sales", "business", "llc", "pitch", "investor", "investors", "licensing", "insurance", "pilot", "launch", "contract"], 180, "General business, no specific business named."),
-    topic("content.ai-tools", "ai-tools", AI_TOOLS, 170, "About the AI tools themselves (Claude, ChatGPT, agents, handoffs)."),
-    ...ENTITY_RULES([...AI_TOOLS, ...AI_NICKNAMES]),
-    ...sharedTagRules
-  ]
-};
-var PRESETS = { A: PRESET_A, B: PRESET_B, C: PRESET_C, D: PRESET_D };
+function buildPresets(v) {
+  const PROJECTS3 = v.projects;
+  const STRONG_WORDS = Object.values(PROJECTS3).flatMap((p) => p.words);
+  const AI_NICKNAMES2 = v.aiNicknames;
+  const nonEmpty = (r) => !(r.when.anyWords && r.when.anyWords.length === 0) && !(r.when.conversationWords && r.when.conversationWords.length === 0);
+  const projectRules = (priority, prefix = "", strongOnly = false) => Object.entries(PROJECTS3).map(([slug2, p]) => ({
+    id: `content.project.${slug2}`,
+    layer: "content",
+    when: { anyWords: strongOnly ? p.words : allWords(p) },
+    category: `${prefix}${slug2}`,
+    addTags: [slug2],
+    priority,
+    description: `Mentions ${p.name}.`
+  }));
+  const projectNotebookRules = (priority, prefix = "", strongOnly = false) => Object.entries(PROJECTS3).map(([slug2, p]) => ({
+    id: `content.notebook.${slug2}`,
+    layer: "content",
+    when: { conversationWords: strongOnly ? p.words : allWords(p) },
+    category: `${prefix}${slug2}`,
+    addTags: [slug2],
+    priority,
+    description: `The conversation it came from is about ${p.name}.`
+  }));
+  const sharedTagRules = [
+    { id: "tag-only.money", layer: "content", when: { anyWords: v.finance }, addTags: ["money"], priority: 50, description: "Talks about money." },
+    { id: "tag-only.personal", layer: "content", when: { anyWords: v.personal }, addTags: ["personal"], priority: 50, description: "Personal life." },
+    { id: "tag-only.decision", layer: "content", when: { anyWords: ["decided", "decision", "we will", "going with"] }, addTags: ["decision"], priority: 50, description: "Records a decision." }
+  ];
+  const projectCats = Object.entries(PROJECTS3).map(([slug2, p]) => ({ slug: slug2, name: p.name }));
+  const A = {
+    id: "preset-a",
+    name: "A \u2014 By project",
+    description: "Every memory goes in the project it is about. Anything not about a project goes to General, or the unsorted tray.",
+    categories: [...projectCats, { slug: "personal", name: "Personal" }, { slug: "general", name: "General" }],
+    rules: [
+      ...Object.keys(PROJECTS3).map((slug2) => tagRule(slug2, [slug2, PROJECTS3[slug2].name])),
+      ...projectRules(600),
+      ...projectNotebookRules(550),
+      topic("content.personal", "personal", v.personal, 300, "Personal life, not a project."),
+      { id: "shape.code.general", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "general", priority: 200, description: "Technical item with no project named." },
+      ...sharedTagRules
+    ].filter(nonEmpty)
+  };
+  const B = {
+    id: "preset-b",
+    name: "B \u2014 By kind of work",
+    description: "Sorted by what kind of work it is: code, money, marketing, research, planning, design, personal.",
+    categories: [
+      { slug: "code", name: "Code" },
+      { slug: "money", name: "Money" },
+      { slug: "marketing", name: "Marketing" },
+      { slug: "research", name: "Research" },
+      { slug: "planning", name: "Planning" },
+      { slug: "design", name: "Design" },
+      { slug: "personal", name: "Personal" }
+    ],
+    rules: [
+      tagRule("code", ["code"]),
+      tagRule("money", ["money", "finance"]),
+      tagRule("personal", ["personal"]),
+      { id: "shape.code", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "code", priority: 450, description: "It is code, a PR, a commit, or an error." },
+      topic("content.money", "money", v.finance, 420, "Talks about money (invoices, payments, pricing, tax).", ["money"]),
+      topic("content.personal", "personal", v.personal, 410, "Personal life."),
+      topic("content.marketing", "marketing", v.marketing, 400, "Marketing, social, or outreach."),
+      topic("content.design", "design", v.design, 390, "Design or visuals."),
+      topic("content.research", "research", v.research, 380, "Research or a comparison."),
+      topic("content.code-words", "code", v.codeWords, 370, "Technical words (repo, deploy, database...)."),
+      topic("content.planning", "planning", v.planning, 360, "A plan, spec, handoff or decision."),
+      ...projectRules(10).map((r) => ({ ...r, category: void 0, id: r.id.replace("content.", "tag-only.") })),
+      ...sharedTagRules
+    ].filter(nonEmpty)
+  };
+  const C = {
+    id: "preset-c",
+    name: "C \u2014 Work / personal first, then project",
+    description: "Personal life is split off first. Work is then filed by project (work/<project>), or work/general.",
+    categories: [
+      { slug: "personal", name: "Personal" },
+      { slug: "personal/money", name: "Personal money", parent: "personal" },
+      { slug: "work/general", name: "Work \u2014 general", parent: "work" },
+      ...projectCats.map((c) => ({ slug: `work/${c.slug}`, name: `Work \u2014 ${c.name}`, parent: "work" }))
+    ],
+    rules: [
+      tagRule("personal", ["personal"]),
+      { id: "content.personal", layer: "content", when: { anyWords: v.personal, noneWords: Object.values(PROJECTS3).flatMap(allWords) }, category: "personal", priority: 700, description: "Personal life with no project named." },
+      ...projectRules(600, "work/"),
+      ...projectNotebookRules(550, "work/"),
+      { id: "shape.work", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "work/general", priority: 200, description: "Technical work with no project named." },
+      topic("content.work-words", "work/general", [...v.codeWords, ...v.marketing, ...v.finance], 150, "Work words with no project named."),
+      ...sharedTagRules
+    ].filter(nonEmpty)
+  };
+  const projectContextRules = (priority) => Object.entries(PROJECTS3).filter(([, p]) => p.weak?.length).map(([slug2, p]) => ({
+    id: `content.project-context.${slug2}`,
+    layer: "content",
+    when: { anyWords: p.weak, withAny: v.productContext },
+    category: slug2,
+    addTags: [slug2],
+    priority: priority(slug2),
+    description: `Talks about ${p.name}'s line of work and about the product or business side of it.`
+  }));
+  const jobWords = [...v.jobTalk, ...v.jobWeak];
+  const D = {
+    id: "preset-d",
+    name: "D \u2014 All-round default",
+    description: v.presetDDescription,
+    categories: [
+      { slug: "personal", name: "Personal" },
+      { slug: "finance", name: "Finance" },
+      { slug: "code", name: "Code" },
+      { slug: "business", name: "Business (general)" },
+      { slug: "ai-tools", name: "AI tools & agents" },
+      { slug: "people", name: "People" },
+      { slug: "places", name: "Places" },
+      { slug: "organizations", name: "Organizations & customers" },
+      ...projectCats.map((c) => ({ ...c, parent: "business" }))
+    ],
+    ignore: INFRA_IGNORE,
+    rules: [
+      tagRule("personal", ["personal"]),
+      tagRule("finance", ["finance", "money"]),
+      tagRule("code", ["code"]),
+      ...Object.keys(PROJECTS3).map((slug2) => tagRule(slug2, [slug2, PROJECTS3[slug2].name])),
+      // Personal beats project only when no business is named.
+      { id: "content.personal", layer: "content", when: { anyWords: v.personal, noneWords: [...STRONG_WORDS, ...AI_NICKNAMES2] }, category: "personal", priority: 650, description: "Personal life, no business named." },
+      ...projectRules(600, "", true),
+      // A business's product context outranks a notebook name; a business whose weak words are generic trade talk
+      // (the owner pack's Forge TMS) sits just below notebooks, so inside another business's conversation it stays put.
+      ...projectContextRules((slug2) => slug2 === "forge-tms" ? 545 : 590),
+      // Money outranks the day job: "invoice from <a trucking company>" is Finance, not day-job talk. Off when the pack has no day job.
+      ...jobWords.length ? [
+        { id: "content.finance-job", layer: "content", when: { anyWords: FINANCE_STRICT, withAny: jobWords, noneWords: [...STRONG_WORDS, ...AI_NICKNAMES2] }, category: "finance", priority: 568, description: "Money (invoice, payment, tax, ...) mixed with day-job words: money outranks the day job.", addTags: ["money", "job"] },
+        { id: "content.job-talk", layer: "content", when: { shape: ["chat"], anyWords: jobWords, noneWords: [...STRONG_WORDS, ...v.productContext] }, category: "personal", priority: 560, description: "Day-job talk, with no business named and nothing about the product.", addTags: ["job"] }
+      ] : [],
+      ...projectNotebookRules(550, "", true),
+      topic("content.finance", "finance", v.finance, 400, "Money with no business named (invoices, payments, tax).", ["money"]),
+      { id: "shape.code", layer: "shape", when: { shape: ["code", "pr", "commit", "error"] }, category: "code", priority: 200, description: "It is code, a PR, a commit, or an error, with no business named." },
+      topic("content.code-words", "code", v.codeWords, 190, "Technical words, no business named."),
+      topic("content.business", "business", [...v.marketing, "customer", "customers", "client", "sales", "business", "llc", "pitch", "investor", "investors", "licensing", "insurance", "pilot", "launch", "contract"], 180, "General business, no specific business named."),
+      topic("content.ai-tools", "ai-tools", v.aiTools, 170, "About the AI tools themselves (Claude, ChatGPT, agents, handoffs)."),
+      ...ENTITY_RULES([...v.aiTools, ...AI_NICKNAMES2]),
+      ...sharedTagRules
+    ].filter(nonEmpty)
+  };
+  return { A, B, C, D };
+}
+var PRESETS = buildPresets(GENERIC_VOCAB);
+var PRESET_A = PRESETS.A;
+var PRESET_B = PRESETS.B;
+var PRESET_C = PRESETS.C;
+var PRESET_D = PRESETS.D;
+var OWNER_PRESETS = buildPresets(OWNER_VOCAB);
+function presetsFor(pack, fallback = "generic") {
+  const key = (pack ?? "").trim().toLowerCase();
+  const name = key === "owner" || key === "generic" ? key : fallback;
+  return name === "owner" ? OWNER_PRESETS : PRESETS;
+}
 
 // src/librarian/plainRules.ts
 var SHAPES = {
@@ -1003,10 +1129,12 @@ function planBackfill(items, current, book, extraRules = [], forceIds = /* @__PU
 
 // src/server/librarian-store.ts
 var ENGINE_VERSION = "librarian-0.3.0";
+var STORE_PRESETS = () => presetsFor(process.env.LIBRARIAN_VOCAB, "owner");
 async function activeRulebook(db) {
+  const PRESETS2 = STORE_PRESETS();
   const r = await db.query("SELECT rulebook FROM librarian_settings ORDER BY chosen_at DESC, id DESC LIMIT 1");
   const id = r.rows[0]?.rulebook ?? "preset-d";
-  return Object.values(PRESETS).find((b) => b.id === id) ?? PRESETS.D;
+  return Object.values(PRESETS2).find((b) => b.id === id) ?? PRESETS2.D;
 }
 async function activeExtraRules(db) {
   const r = await db.query("SELECT rule_key, layer, rule_json FROM librarian_active_rules");
@@ -1141,6 +1269,7 @@ async function recordFilingsBulk(db, filings, filedBy) {
 export {
   ENGINE_VERSION,
   LIBRARIAN_TOOLS,
+  STORE_PRESETS,
   activeExtraRules,
   activeRulebook,
   addPlainRule,
