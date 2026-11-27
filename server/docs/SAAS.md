@@ -83,8 +83,9 @@ Limits are enforced in `saas/memory.ts` (memory count, stored bytes via the per-
 | `009_plans_personal.sql` | **SaaS database only** | plan id `pro` → `personal` (CHECK widened), `tenant_storage` byte counter with RLS (backfilled from existing messages), grants for `memory_app`. Down restores `pro` and drops the counter. (008 is the graph migration; it is not in the SaaS chain.) |
 | `010_paddle_seats.sql` | **SaaS database only** | `tenants.seats`, `payment_provider`, `paddle_customer_id`, `paddle_subscription_id`, `paddle_event_at`; `paddle_events` webhook ledger (same apply tracking as `stripe_events`). Additive. |
 | `011_recall_quality.sql` | **SaaS database only** | Recall quality: expression GIN full-text index `messages_text_fts` (ranked search), `memory_supersessions` (a correction replaces an older memory; nothing is edited or deleted, history kept), `memory_recalls` (read/confirm log used to strengthen recalled memories and let unused ones fade in ranking). Both tables tenant-scoped with FORCE RLS; `memory_app` gets SELECT/INSERT/DELETE. Additive. |
+| `012_memory_embeddings.sql` | **SaaS database only** | `memory_embeddings`: passage vectors (REAL[], no extension needed) for meaning-based search. Filled and used only when the server runs with `SCRIBE_EMBEDDINGS=local`; otherwise empty and search is full-text/literal. FORCE RLS, `memory_app` SELECT/INSERT/DELETE. Additive. |
 
-Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009 → 010 → 011.
+Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009 → 010 → 011 → 012.
 
 Moving Sam's archive into the hosted service later = export from `claude_memory`, import as tenant `self` (or a new tenant). Not built yet.
 
@@ -104,6 +105,9 @@ On machines without Docker bridge networking add `-f staging/docker-compose.host
 | Var | Required | Meaning |
 |---|---|---|
 | `SCRIBE_MODE=saas` (or `MEMORY_MODE=saas`) | yes | selects this mode |
+| `SCRIBE_EMBEDDINGS=local` | no | meaning-based search with a small local model (no paid key). Needs `@huggingface/transformers@4.3.2`, which is not a dependency: `npm install --no-save @huggingface/transformers@4.3.2`, or Docker `--build-arg WITH_EMBEDDINGS=1` and migration 012. The model downloads on first use (about 25 MB). Off by default. |
+| `SCRIBE_EMBEDDINGS_MODE` | no | `fallback` (default: meaning-based results only when words find fewer than 3 memories) or `blend` (always fused with word ranking). |
+| `SCRIBE_EMBED_MODEL` | no | local model id (default `Xenova/all-MiniLM-L6-v2`). |
 | `DATABASE_URL` | yes | connection as `memory_app` (not the owner) |
 | `PUBLIC_URL` | yes | https origin; issuer + resource URLs derive from it |
 | `DATABASE_SSL=disable` | local only | default is SSL on |

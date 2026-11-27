@@ -306,7 +306,7 @@ export { UNSORTED };
 
 // ------------------------------------------------------------------ export / delete-all
 // librarian_settings (the chosen rulebook) and usage_daily (fair-use metering) are kept.
-const DATA_TABLES = ["memory_recalls", "memory_supersessions", "agent_message_receipts", "agent_message_reads", "agent_directory", "agent_messages", "flags", "memory_moves", "memory_filings", "librarian_rules", "messages", "conversations", "projects"] as const;
+const DATA_TABLES = ["memory_embeddings", "memory_recalls", "memory_supersessions", "agent_message_receipts", "agent_message_reads", "agent_directory", "agent_messages", "flags", "memory_moves", "memory_filings", "librarian_rules", "messages", "conversations", "projects"] as const;
 
 export async function exportAll(q: Q, tenantId: string) {
   const out: Record<string, unknown[]> = {};
