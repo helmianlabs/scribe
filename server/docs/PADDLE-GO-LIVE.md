@@ -86,9 +86,10 @@ the owner's, not the code's.
 
 1. **A website that Paddle can review**, on `scribemem.helmian.cloud`, with **publicly accessible terms of service, privacy
    policy and refund policy pages**, prices that match the catalog (Personal $8/$80, Team $15 per seat), and a contact email
-   address or form reachable from the home page. **These pages do not exist yet** (`docs/SAAS.md` lists terms and privacy as not
-   built). They must be written, ideally read by a lawyer, and published first. Paddle's review also checks the site is a real
-   product with real content.
+   address or form reachable from the home page. These pages are now published: `/` (home and plans), `/pricing`, `/terms`,
+   `/privacy` and `/refunds`. Contact is helmianlabs@gmail.com, in the page body and in the footer of every HTML page. They are
+   written in plain English and have not been reviewed by a lawyer. Paddle's review also checks the site is a real product
+   with real content.
 2. **DNS for `scribemem.helmian.cloud`** and a proxy block for it on the host (see HOSTING.md). The record and the proxy are the
    owner's; nothing in this repo creates them.
 3. **Sign up for a live Paddle account** at https://vendors.paddle.com/signup in the owner's name, and confirm the email.
