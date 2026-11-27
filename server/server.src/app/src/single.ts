@@ -24,6 +24,7 @@ import type { AuthInfo } from "@modelcontextprotocol/sdk/server/auth/types.js";
 import { PUBLIC_URL, MCP_PATH, PORT, AUTH_PASSPHRASE } from "./config.js";
 import { provider, adoptClient, approveAuthorization, denyAuthorization, getPending } from "./oauth-provider.js";
 import { renderConsentPage } from "./consent.js";
+import { createLockout } from "./lockout.js";
 import { buildMcpServer } from "./mcp-server.js";
 import { mailboxStatus, librarianPools } from "./db.js";
 import { unreadSummary, PostOfficeError } from "./courier/store.js";
@@ -211,10 +212,20 @@ app.use(
 // Consent POST handler: validate the passphrase, then redirect back to client.
 // (urlencoded form body from the consent page.)
 // ---------------------------------------------------------------------------
+// Per-source lockout: 5 wrong passphrases from one address lock that address for 15 minutes.
+const consentLockout = createLockout();
+
 app.post("/consent", express.urlencoded({ extended: false }), (req, res) => {
-  const pendingId = String(req.body.pending_id || "");
-  const action = String(req.body.action || "");
-  const passphrase = String(req.body.passphrase || "");
+  // An empty or non-form POST leaves req.body undefined; that is a bad request (400), not a crash (500).
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const pendingId = String(body.pending_id || "");
+  const action = String(body.action || "");
+  const passphrase = String(body.passphrase || "");
+  const source = String(req.ip || req.socket?.remoteAddress || "unknown");
+  if (!pendingId) {
+    res.status(400).send("Missing authorization request. Please retry from your AI app.");
+    return;
+  }
 
   const pending = getPending(pendingId);
   if (!pending) {
@@ -232,8 +243,23 @@ app.post("/consent", express.urlencoded({ extended: false }), (req, res) => {
     return;
   }
 
-  // Approve path: constant-time-ish passphrase check.
+  // Approve path: lockout first, then a constant-time-ish passphrase check.
+  if (consentLockout.lockedFor(source) > 0) {
+    res
+      .status(429)
+      .set("Content-Type", "text/html; charset=utf-8")
+      .send(
+        renderConsentPage({
+          pendingId,
+          clientName: resolveClientName(pending.clientId),
+          error: "Too many incorrect attempts. Please wait 15 minutes and try again.",
+          scopes: pending.scopes,
+        })
+      );
+    return;
+  }
   if (!constantTimeEquals(passphrase, AUTH_PASSPHRASE)) {
+    consentLockout.fail(source);
     res
       .status(401)
       .set("Content-Type", "text/html; charset=utf-8")
@@ -248,6 +274,7 @@ app.post("/consent", express.urlencoded({ extended: false }), (req, res) => {
     return;
   }
 
+  consentLockout.succeed(source);
   const redirectUrl = approveAuthorization(pendingId);
   if (!redirectUrl) {
     res.status(400).send("This authorization request has expired. Please retry from Claude.ai.");

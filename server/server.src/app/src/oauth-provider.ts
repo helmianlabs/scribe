@@ -51,6 +51,14 @@ function token(bytes = 32): string {
   return randomBytes(bytes).toString("base64url");
 }
 
+/**
+ * Access and refresh tokens are held (in memory and in OAUTH_STATE_FILE) only as SHA-256 hashes, so a leaked or
+ * backed-up state file cannot be replayed as a bearer token. Tokens are 256-bit random, so an unsalted hash is sound.
+ */
+export function hashToken(t: string): string {
+  return createHash("sha256").update(String(t)).digest("base64url");
+}
+
 // ---------------------------------------------------------------------------
 // In-memory stores
 // ---------------------------------------------------------------------------
@@ -66,7 +74,7 @@ interface StoredAuthCode {
 }
 
 interface StoredAccessToken {
-  token: string;
+  tokenHash: string;
   clientId: string;
   scopes: string[];
   resource?: string;
@@ -74,7 +82,7 @@ interface StoredAccessToken {
 }
 
 interface StoredRefreshToken {
-  token: string;
+  tokenHash: string;
   clientId: string;
   scopes: string[];
   resource?: string;
@@ -98,8 +106,22 @@ function loadState(): void {
     const raw = JSON.parse(readFileSync(STATE_FILE, "utf8"));
     const t = now();
     for (const c of raw.clients ?? []) if (c?.client_id) clients.set(c.client_id, c);
-    for (const a of raw.accessTokens ?? []) if (a?.token && a.expiresAt >= t) accessTokens.set(a.token, a);
-    for (const r of raw.refreshTokens ?? []) if (r?.token && r.expiresAt >= t) refreshTokens.set(r.token, r);
+    // Migration: a version-1 file holds raw tokens. They are hashed on load and the file is rewritten as version 2
+    // (hashes only) straight away, so nobody is signed out and the plain tokens leave the disk.
+    let migrated = false;
+    const intake = <T extends { tokenHash: string; expiresAt: number }>(list: unknown, into: Map<string, T>) => {
+      for (const e of (Array.isArray(list) ? list : []) as Array<Record<string, any>>) {
+        if (!e || e.expiresAt < t) continue;
+        if (typeof e.tokenHash === "string") { into.set(e.tokenHash, e as unknown as T); continue; }
+        if (typeof e.token !== "string") continue;
+        const { token: rawToken, ...rest } = e;
+        into.set(hashToken(rawToken), { ...rest, tokenHash: hashToken(rawToken) } as unknown as T);
+        migrated = true;
+      }
+    };
+    intake(raw.accessTokens, accessTokens);
+    intake(raw.refreshTokens, refreshTokens);
+    if (migrated) queueMicrotask(() => saveState());
     console.log(
       `oauth state loaded: ${clients.size} clients, ${accessTokens.size} access, ${refreshTokens.size} refresh`
     );
@@ -113,7 +135,7 @@ function saveState(): void {
     mkdirSync(dirname(STATE_FILE), { recursive: true, mode: 0o700 });
     const tmp = `${STATE_FILE}.${process.pid}.tmp`;
     const data = JSON.stringify({
-      version: 1,
+      version: 2,
       clients: [...clients.values()],
       accessTokens: [...accessTokens.values()],
       refreshTokens: [...refreshTokens.values()],
@@ -307,8 +329,8 @@ export const provider: OAuthServerProvider = {
     const tokenResource = resource?.toString() ?? rec.resource ?? RESOURCE_ID;
 
     const accessToken = token(32);
-    accessTokens.set(accessToken, {
-      token: accessToken,
+    accessTokens.set(hashToken(accessToken), {
+      tokenHash: hashToken(accessToken),
       clientId: client.client_id,
       scopes: rec.scopes,
       resource: tokenResource,
@@ -316,8 +338,8 @@ export const provider: OAuthServerProvider = {
     });
 
     const refreshToken = token(32);
-    refreshTokens.set(refreshToken, {
-      token: refreshToken,
+    refreshTokens.set(hashToken(refreshToken), {
+      tokenHash: hashToken(refreshToken),
       clientId: client.client_id,
       scopes: rec.scopes,
       resource: tokenResource,
@@ -340,10 +362,10 @@ export const provider: OAuthServerProvider = {
     scopes?: string[],
     resource?: URL
   ): Promise<OAuthTokens> {
-    const rec = refreshTokens.get(refreshToken);
+    const rec = refreshTokens.get(hashToken(refreshToken));
     if (!rec) throw new Error("Invalid refresh token");
     if (rec.expiresAt < now()) {
-      refreshTokens.delete(refreshToken);
+      refreshTokens.delete(hashToken(refreshToken));
       saveState();
       throw new Error("Refresh token expired");
     }
@@ -353,10 +375,10 @@ export const provider: OAuthServerProvider = {
     const tokenResource = resource?.toString() ?? rec.resource ?? RESOURCE_ID;
 
     // Rotate the refresh token (OAuth 2.1 requires rotation for public clients).
-    refreshTokens.delete(refreshToken);
+    refreshTokens.delete(hashToken(refreshToken));
     const newRefresh = token(32);
-    refreshTokens.set(newRefresh, {
-      token: newRefresh,
+    refreshTokens.set(hashToken(newRefresh), {
+      tokenHash: hashToken(newRefresh),
       clientId: client.client_id,
       scopes: grantedScopes,
       resource: tokenResource,
@@ -364,8 +386,8 @@ export const provider: OAuthServerProvider = {
     });
 
     const accessToken = token(32);
-    accessTokens.set(accessToken, {
-      token: accessToken,
+    accessTokens.set(hashToken(accessToken), {
+      tokenHash: hashToken(accessToken),
       clientId: client.client_id,
       scopes: grantedScopes,
       resource: tokenResource,
@@ -383,15 +405,16 @@ export const provider: OAuthServerProvider = {
   },
 
   async verifyAccessToken(accessToken: string): Promise<AuthInfo> {
-    const rec = accessTokens.get(accessToken);
+    const key = hashToken(accessToken);
+    const rec = accessTokens.get(key);
     if (!rec) throw new InvalidTokenError("Invalid or unknown access token");
     if (rec.expiresAt < now()) {
-      accessTokens.delete(accessToken);
+      accessTokens.delete(key);
       saveState();
       throw new InvalidTokenError("Access token expired");
     }
     return {
-      token: rec.token,
+      token: accessToken,
       clientId: rec.clientId,
       scopes: rec.scopes,
       expiresAt: rec.expiresAt,
@@ -403,7 +426,8 @@ export const provider: OAuthServerProvider = {
     _client: OAuthClientInformationFull,
     request: OAuthTokenRevocationRequest
   ): Promise<void> {
-    const changed = accessTokens.delete(request.token) || refreshTokens.delete(request.token);
+    const key = hashToken(request.token);
+    const changed = accessTokens.delete(key) || refreshTokens.delete(key);
     if (changed) saveState();
   },
 };
