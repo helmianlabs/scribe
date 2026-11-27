@@ -112,8 +112,28 @@ export function createSaasApp(deps: SaasDeps) {
     res.append("Set-Cookie", `${COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${cfg.sessionTtlDays * 86400}${cfg.cookieSecure ? "; Secure" : ""}`);
   const clearSession = (res: Response) => res.append("Set-Cookie", `${COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${cfg.cookieSecure ? "; Secure" : ""}`);
   const sessionUser = (req: Request) => accounts.userForSession(cookies(req)[COOKIE]);
-  const sameOrigin = (req: Request) => { const o = req.header("origin"); return !o || o === origin; };
+  // CSRF for cookie-backed POSTs only. GET pages never require Origin.
+  // Allow the configured public origin and the public host, so a typo in
+  // PUBLIC_URL cannot lock out scribemem.helmian.cloud form posts.
+  // Chrome sends Origin: null on same-origin form POSTs when the site's
+  // Referrer-Policy is no-referrer; Sec-Fetch-Site is browser-controlled
+  // and still reports same-origin. Cross-site POSTs with Origin: null stay refused.
+  const allowedOrigins = new Set([origin, "https://scribemem.helmian.cloud"]);
+  const sameOrigin = (req: Request) => {
+    const o = req.header("origin");
+    if (!o) return true;
+    if (allowedOrigins.has(o)) return true;
+    return o === "null" && req.header("sec-fetch-site") === "same-origin";
+  };
   const html = (res: Response, status: number, body: string) => res.status(status).set("Content-Type", "text/html; charset=utf-8").send(body);
+  const refuseBadOrigin = (req: Request, res: Response) => {
+    const accept = req.header("accept") || "";
+    if (accept.includes("text/html")) {
+      html(res, 403, messagePage("This request could not be checked", "Open this page directly on scribemem.helmian.cloud and try again."));
+      return;
+    }
+    res.status(403).json({ error: "Bad origin." });
+  };
   const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
     fn(req, res).catch((e) => {
       if (e instanceof LimitError && e.kind === "calls") { res.set("Retry-After", String(secondsToUtcMidnight())).status(429).json({ error: e.message, limit: e.kind }); return; }
@@ -141,7 +161,7 @@ export function createSaasApp(deps: SaasDeps) {
   app.get("/refunds", (_req, res) => html(res, 200, refundsPage()));
   app.get("/try", (_req, res) => html(res, 200, tryPage()));
   app.post("/try", limiter(10, 60 * 60 * 1000), express.urlencoded({ extended: false }), express.json(), wrap(async (req, res) => {
-    if (!sameOrigin(req)) { res.status(403).json({ error: "Bad origin." }); return; }
+    if (!sameOrigin(req)) { refuseBadOrigin(req, res); return; }
     const guest = await accounts.createGuest();
     const mcpUrl = mcpUrlFor(guest.tenant);
     const tokens = await oauth.mintFirstParty(guest.tenant.id, guest.user.id, mcpUrl);
@@ -164,7 +184,7 @@ export function createSaasApp(deps: SaasDeps) {
   }));
   app.get("/login", (req, res) => html(res, 200, signInPage({ returnTo: safeReturnTo(req.query.return_to), emailSignIn: cfg.mail.provider !== "off" })));
   app.post("/auth/start", limiter(20, 60 * 60 * 1000), express.urlencoded({ extended: false }), express.json(), wrap(async (req, res) => {
-    if (!sameOrigin(req)) { res.status(403).json({ error: "Bad origin." }); return; }
+    if (!sameOrigin(req)) { refuseBadOrigin(req, res); return; }
     if (cfg.mail.provider === "off") {
       const msg = "Email sign-in is not enabled yet. Try without an account at /try.";
       const wantsJson = (req.header("content-type") || "").includes("json") || (req.header("accept") || "").includes("json");

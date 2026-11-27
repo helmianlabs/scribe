@@ -80,3 +80,94 @@ test("guest emails use the reserved invalid domain", () => {
   assert.equal(isGuestEmail("guest-abc@try.scribemem.invalid"), true);
   assert.equal(isGuestEmail("troy@dairyforge.com"), false);
 });
+
+test("GET /try is a page and does not require Origin", async () => {
+  const s = await startSaas();
+  try {
+    for (const headers of [
+      {},
+      { Origin: "null", "Sec-Fetch-Site": "cross-site", "Sec-Fetch-Mode": "navigate", "Sec-Fetch-Dest": "document" },
+      { Origin: "https://scribe.helmian.cloud", "Sec-Fetch-Site": "cross-site" },
+      { Origin: "https://scribemem.helmian.cloud" },
+    ]) {
+      const r = await fetch(`${s.base}/try`, { headers: { Accept: "text/html", ...headers } });
+      assert.equal(r.status, 200, JSON.stringify(headers));
+      assert.match(r.headers.get("content-type") || "", /text\/html/);
+      assert.match(await r.text(), /Create my memory/);
+    }
+  } finally {
+    await s.close();
+  }
+});
+
+test("POST /try from a same-origin Chrome form (Origin: null, no-referrer) succeeds", async () => {
+  const s = await startSaas();
+  try {
+    const r = await fetch(`${s.base}/try`, {
+      method: "POST",
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "null",
+        "Sec-Fetch-Site": "same-origin",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+      },
+      body: "",
+    });
+    assert.equal(r.status, 201);
+    assert.match(r.headers.get("content-type") || "", /text\/html/);
+    assert.match(await r.text(), /Your Scribe Memory is ready/);
+  } finally {
+    await s.close();
+  }
+});
+
+test("POST /try still refuses cross-site and spoofed-null origins", async () => {
+  const s = await startSaas();
+  try {
+    const cross = await fetch(`${s.base}/try`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", Origin: "https://scribe.helmian.cloud" },
+      body: "{}",
+    });
+    assert.equal(cross.status, 403);
+    assert.deepEqual(await cross.json(), { error: "Bad origin." });
+
+    const evil = await fetch(`${s.base}/try`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json", Origin: "https://evil.example" },
+      body: "{}",
+    });
+    assert.equal(evil.status, 403);
+
+    const spoofedNull = await fetch(`${s.base}/try`, {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        Origin: "null",
+        "Sec-Fetch-Site": "cross-site",
+      },
+      body: "{}",
+    });
+    assert.equal(spoofedNull.status, 403);
+
+    const formCross = await fetch(`${s.base}/try`, {
+      method: "POST",
+      headers: {
+        Accept: "text/html",
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://evil.example",
+        "Sec-Fetch-Site": "cross-site",
+        "Sec-Fetch-Mode": "navigate",
+      },
+      body: "",
+    });
+    assert.equal(formCross.status, 403);
+    assert.match(formCross.headers.get("content-type") || "", /text\/html/);
+    assert.doesNotMatch(await formCross.text(), /Your Scribe Memory is ready/);
+  } finally {
+    await s.close();
+  }
+});
