@@ -7,7 +7,6 @@ that can speak MCP can use it.
 Your AIs connect to Scribe's memory and mailbox through Scribe's own door
 (`https://scribe.dairyforge.com/mcp`), and the owner approves each
 connection with the Scribe passphrase.
-Your AIs connect to Scribe at https://scribe.dairyforge.com/mcp.
 
 The PC program is **Scribe**: the Windows installer is
 named Scribe and pairs your PC through the Scribe hands hub,
@@ -31,6 +30,7 @@ The Scribe site, where an AI connects in one paste:
 | `spoke/` | The Scribe PC program (Windows agent), its installer, the agent-os profile kit, and the hands hub that connects your AIs to the PC |
 | `server/` | The Scribe memory server: shared memory, the Librarian, Courier (the AIs' mailbox), the Neon/Postgres connection and migrations |
 | `door/` | The Scribe door at scribe.dairyforge.com: one OAuth consent and one MCP endpoint for the memory and hands toolsets |
+| `live-snapshots/` | Read-only copies of source that was running in production but was not in this repository (kept for reference; not built or tested). See its README |
 | `guard/` | Scribe's Guard, whole and unchanged: the browser extension (with auto-nudge), Executive Guard, and the kernel sources the extension is generated from |
 
 `guard/hands-mcp` and `guard/src/hands` are links to the PC program's copies, so
@@ -131,6 +131,33 @@ Guard's auto-approver identity is already a setting (`AUTO_APPROVE_PRINCIPAL`,
 default `auto-approve`), and approver identities come from
 `EXEC_GUARD_APPROVER_TOKENS` (`name=token`, see
 `guard/executive-guard/deploy/executive-guard.env.example`).
+
+## Security settings
+
+| Setting | Where | What it does |
+|---|---|---|
+| `AUTH_PASSPHRASE` | door, memory server | The passphrase typed on the consent screen to connect an AI |
+| `APPROVALS_PASSPHRASE` | door (optional) | A **second** passphrase used only to sign in to `/approvals` and decide PC actions. Give AIs `AUTH_PASSPHRASE` only. Unset = the connect passphrase also signs in to approvals (the old behaviour) |
+| `DOOR_SCRIBE_HANDS` | door (optional) | `1` makes the `scribe` flavour also front the PC hands (needs `HANDS_BACKEND_RESOURCE`). Default off = memory only |
+
+Wrong passphrases are counted per source address (5 wrong tries lock that address for
+15 minutes) on the door's consent and approvals pages and on the self-host server's
+consent page. OAuth access and refresh tokens are stored only as SHA-256 hashes; a state
+file written by an older version is migrated on first start without signing anyone out.
+
+## Librarian and knowledge graph
+
+The Librarian files every saved memory on a shelf with a fixed, explainable rulebook
+(no AI involved). Shelves now include `people`, `places` and `organizations`. `explain_filing`
+returns every rule that matched, `add_rule` accepts plain sentences such as
+"Giltner goes in organizations", unknown shelf names need `confirm_new_category: true`,
+and new rules re-file the unsorted tray. The self-host server also builds a small knowledge
+graph (`entities`, `links`; tool `graph_neighbors`; migration `server/migrations/008_graph.sql`).
+Details: [docs/LIBRARIAN-AUDIT-FIXES.md](docs/LIBRARIAN-AUDIT-FIXES.md).
+
+## Continuous integration
+
+`.github/workflows/ci.yml` installs every package and runs `npm test` on each push and pull request.
 
 ## Code signing
 

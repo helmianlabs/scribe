@@ -5,3 +5,7 @@ export * from './engine.ts';
 export * from './presets.ts';
 export * from './plainRules.ts';
 export * from './learn.ts';
+export * from './categories.ts';
+export * from './trail.ts';
+export * from './repair.ts';
+export * from './graph.ts';

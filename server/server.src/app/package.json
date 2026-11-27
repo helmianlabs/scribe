@@ -1,6 +1,6 @@
 {
   "name": "helmian-scribe",
-  "version": "2.0.0",
+  "version": "1.1.0",
   "description": "Helmian Scribe: one memory every AI you use can read and write (MCP server: self-host + hosted multi-tenant), with the Librarian, Flags and Helmian Courier.",
   "type": "module",
   "main": "dist/index.js",
@@ -28,5 +28,6 @@
     "@types/pg": "^8.11.10",
     "tsx": "^4.23.15",
     "typescript": "^5.7.2"
-  }
+  },
+  "license": "BUSL-1.1"
 }

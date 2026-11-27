@@ -1,6 +1,6 @@
 {
   "name": "helmian-scribe-workspace",
-  "version": "0.1.0",
+  "version": "1.1.0",
   "private": true,
   "type": "module",
   "description": "Helmian Scribe workspace: the MCP server plus the Librarian (deterministic rules engine that files every memory).",
@@ -20,5 +20,6 @@
   },
   "dependencies": {
     "pg": "^8.13.0"
-  }
+  },
+  "license": "BUSL-1.1"
 }

@@ -5,12 +5,38 @@ import { detectShape } from './shape.js';
 import { findWords } from './match.js';
 
 /** Tie-break when priorities are equal: the more specific layer wins. */
-const LAYER_RANK: Record<Layer, number> = { learned: 5, custom: 4, content: 3, shape: 2, source: 1 };
+const LAYER_RANK: Record<Layer, number> = { manual: 6, learned: 5, custom: 4, content: 3, shape: 2, source: 1 };
+
+/**
+ * Rule chaining: a rule's `addTags` become visible to the `when.tags` of the owner's own rules (custom and
+ * learned layers; built-in preset rules keep seeing only written tags). Matching runs in passes:
+ * pass 1 sees only the tags written on the memory; each later pass also sees the tags added by rules that
+ * matched in the pass before. A rule fires at most once, and tags only ever grow, so chains cannot loop;
+ * they also stop after this many passes (a chain can be at most this many rules deep).
+ */
+export const MAX_CHAIN_PASSES = 4;
+
+const patternCache = new Map<string, RegExp | null>();
+function compilePattern(src: string): RegExp | null {
+  if (patternCache.has(src)) return patternCache.get(src)!;
+  let re: RegExp | null = null;
+  if (src.length <= 3000) { try { re = new RegExp(src, 'u'); } catch { re = null; } }
+  patternCache.set(src, re);
+  return re;
+}
+/** The first thing any of the patterns matches in the text, or null. */
+function firstPatternHit(text: string, patterns: string[]): string | null {
+  for (const src of patterns) {
+    const m = compilePattern(src)?.exec(text);
+    if (m) return m[0];
+  }
+  return null;
+}
 
 /** Returns what matched, or null when the rule does not fire. Every condition given must hold. */
 export function evaluateRule(
   rule: Rule,
-  ctx: { text: string; source: string | null; shape: ReturnType<typeof detectShape>; tags: string[]; conv: string },
+  ctx: { text: string; source: string | null; shape: ReturnType<typeof detectShape>; tags: string[]; conv: string; chainTags?: string[] },
 ): string[] | null {
   if (rule.enabled === false) return null;
   const w = rule.when;
@@ -31,9 +57,19 @@ export function evaluateRule(
   }
   if (w.tags?.length) {
     conditions++;
-    const hit = w.tags.find((t) => ctx.tags.includes(normalise(t)));
+    // Built-in (preset) rules look only at the tags the writer typed, so shelves that exist today never move.
+    // Your own rules (custom / learned) also see tags that other rules added: that is rule chaining.
+    const pool = (rule.layer === 'custom' || rule.layer === 'learned') && ctx.chainTags ? ctx.chainTags : ctx.tags;
+    const hit = w.tags.find((t) => pool.includes(normalise(t)));
     if (!hit) return null;
     matched.push(`tag "${normalise(hit)}"`);
+  }
+  if (w.patterns?.length) {
+    conditions++;
+    if (rule.layer === 'custom' || rule.layer === 'learned') return null; // database rules never run patterns
+    const hit = firstPatternHit(ctx.text, w.patterns);
+    if (!hit) return null;
+    matched.push(`pattern match "${hit.trim().slice(0, 40)}"`);
   }
   if (w.conversationWords?.length) {
     conditions++;
@@ -61,6 +97,9 @@ export function evaluateRule(
   }
   if (w.noneWords?.length) {
     if (findWords(ctx.text, w.noneWords).length) return null;
+  }
+  if (w.nonePatterns?.length && rule.layer !== 'custom' && rule.layer !== 'learned') {
+    if (firstPatternHit(ctx.text, w.nonePatterns)) return null;
   }
   return conditions > 0 ? matched : null; // a rule with no conditions never fires
 }
@@ -97,13 +136,39 @@ export function classify(item: MemoryItem, book: Rulebook, extraRules: Rule[] = 
   const conv = notebookLabel(item.conversationName) ?? item.conversationName ?? '';
   const ctx = { text, source, shape, tags, conv };
 
-  const hits: RuleHit[] = [];
-  for (const rule of sortRules([...book.rules, ...extraRules])) {
-    const matched = evaluateRule(rule, ctx);
-    if (matched) hits.push({ ruleId: rule.id, layer: rule.layer, category: rule.category, priority: rule.priority, matched });
+  // Matching in passes (rule chaining). Every rule fires at most once; tags only grow; passes are capped.
+  const sorted = sortRules([...book.rules, ...extraRules]);
+  const allRules = new Map(sorted.map((r) => [r.id, r]));
+  const visibleTags = new Set<string>(tags);
+  const tagAddedBy = new Map<string, string>();
+  const fired = new Map<string, { hit: RuleHit; order: number }>();
+  for (let pass = 1; pass <= MAX_CHAIN_PASSES; pass++) {
+    const passCtx = { ...ctx, chainTags: [...visibleTags] };
+    const newlyFired: Rule[] = [];
+    sorted.forEach((rule, order) => {
+      if (fired.has(rule.id)) return;
+      const matched = evaluateRule(rule, passCtx);
+      if (!matched) return;
+      const hit: RuleHit = { ruleId: rule.id, layer: rule.layer, category: rule.category, priority: rule.priority, matched, description: rule.description };
+      if (pass > 1) {
+        hit.pass = pass;
+        hit.via = (rule.when.tags ?? []).map(normalise).filter((t) => tagAddedBy.has(t)).map((t) => `${t} (from rule ${tagAddedBy.get(t)})`);
+        if (hit.via.length) hit.matched = matched.map((m) => (m.startsWith('tag "') ? `${m} added by rule ${tagAddedBy.get(m.slice(5, -1))}` : m));
+      }
+      fired.set(rule.id, { hit, order });
+      newlyFired.push(rule);
+    });
+    let grew = false;
+    for (const rule of newlyFired) {
+      for (const t of rule.addTags ?? []) {
+        const n = normalise(t);
+        if (!visibleTags.has(n)) { visibleTags.add(n); tagAddedBy.set(n, rule.id); grew = true; }
+      }
+    }
+    if (!newlyFired.length || !grew) break;
   }
+  const hits: RuleHit[] = [...fired.values()].sort((a, b) => a.order - b.order).map((x) => x.hit);
 
-  const allRules = new Map([...book.rules, ...extraRules].map((r) => [r.id, r]));
   const outTags = new Set<string>(tags);
   for (const h of hits) for (const t of allRules.get(h.ruleId)?.addTags ?? []) outTags.add(normalise(t));
   if (shape !== 'chat') outTags.add(shape);

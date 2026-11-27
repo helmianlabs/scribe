@@ -71,7 +71,7 @@ test('tool handlers: move learns a trigger, plain rule files new items, unsorted
   const id2 = (await db.query<any>(`SELECT id FROM messages WHERE text LIKE 'More Kokoro%'`)).rows[0].id;
   const f = await fileMessage(db as any, { id: id2, text: 'More Kokoro tuning tonight', conversationName: 'Shared Memory — muse' });
   assert.equal(f?.category, 'helmian');
-  const add = await addPlainRule(db as any, 'anything mentioning Bryce goes in testers', 'sam');
+  const add = await addPlainRule(db as any, 'anything mentioning Bryce goes in testers', 'sam', { confirmNewCategory: true });
   assert.ok(add.ok);
   const f3 = await fileMessage(db as any, { id: 999, text: 'Bryce signed up', conversationName: 'x' });
   assert.equal(f3?.category, 'testers');

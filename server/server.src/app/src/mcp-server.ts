@@ -13,6 +13,7 @@ import { prepareContent, findingsToFlags, recordFlags, summarize } from "./flags
 import { listFlags } from "./flags/store.js";
 import { scanText, SEVERITIES, type Severity } from "./flags/scanner.js";
 import type { AlertTarget } from "./flags/alerts.js";
+import { KnowledgeGraph } from "./librarian/graph.js";
 import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "./courier/tools.js";
 
 /** Self-host alerts go to ALERT_EMAIL_TO and/or ALERT_WEBHOOK_URL (both optional; stubbed if absent). */
@@ -46,6 +47,19 @@ const SearchMemoryInputSchema = z
 type SearchMemoryInput = z.infer<typeof SearchMemoryInputSchema>;
 
 let librarian: Librarian | null = null;
+let graph: KnowledgeGraph | null = null;
+function getGraph(): KnowledgeGraph {
+  if (!graph) {
+    const { read, write } = librarianPools();
+    graph = new KnowledgeGraph(read, write);
+  }
+  return graph;
+}
+
+function isMissingTable(err: unknown): boolean {
+  return typeof err === "object" && err !== null && (err as { code?: string }).code === "42P01";
+}
+
 function getLibrarian(): Librarian {
   if (!librarian) {
     const { read, write } = librarianPools();
@@ -92,7 +106,7 @@ export function buildMcpServer(scopes: string[] = [], identity: { clientId?: str
   const server = withInboxHint(new McpServer({
     name: "helmian-scribe",
     title: "Helmian Scribe",
-    version: "1.3.0",
+    version: "1.1.0",
   }, { instructions: SERVER_INSTRUCTIONS }));
 
   server.registerTool(
@@ -376,7 +390,7 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
           flagIds = rec.flags.map((f) => f.id);
           alert = rec.alert;
         } catch { /* flags table missing or transient: the save still stands, redaction already applied */ }
-        const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded, redactions: prepared.redactions, flags: summarize(prepared.findings), flag_ids: flagIds, alert };
+        const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded, ...(filing.error ? { filing_error: filing.error } : {}), redactions: prepared.redactions, flags: summarize(prepared.findings), flag_ids: flagIds, alert };
         const block = await mailboxBlock();
         return {
           content: [{ type: "text" as const, text: JSON.stringify(output) + block }],
@@ -415,7 +429,7 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
     "explain_filing",
     {
       title: "Explain a Filing",
-      description: "Say which shelf a memory is on and the exact rule that put it there. Takes the message_id that save_memory returned. Read-only.",
+      description: "Say which shelf a memory is on, the rule that decided it, and EVERY rule that matched (matched_rules, highest priority first, with the exact words matched). Takes the message_id that save_memory returned. Read-only.",
       inputSchema: { message_id: z.number().int().min(1).describe("Message id of the memory.") },
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
@@ -438,12 +452,13 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
         message_id: z.number().int().min(1),
         to_category: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9/_-]*$/i, "category slug, e.g. 'helmian' or 'personal'"),
         source: z.string().min(1).max(40).describe("Who is moving it, e.g. 'sam', 'claude.ai', 'grok'."),
+        confirm_new_category: z.boolean().optional().describe("Set true ONLY to create a brand-new shelf. Without it, a shelf name that does not exist yet is refused (typo guard) and similar existing shelves are suggested."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async (p: { message_id: number; to_category: string; source: string }) => {
+    async (p: { message_id: number; to_category: string; source: string; confirm_new_category?: boolean }) => {
       if (!canWrite) return needWrite("move_memory");
-      try { return jsonResult(await getLibrarian().move(p.message_id, p.to_category.toLowerCase(), p.source)); } catch (e) { return errorResult("Error moving memory", e); }
+      try { return jsonResult(await getLibrarian().move(p.message_id, p.to_category.toLowerCase(), p.source, { confirmNewCategory: p.confirm_new_category })); } catch (e) { return errorResult("Error moving memory", e); }
     }
   );
 
@@ -455,12 +470,13 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
       inputSchema: {
         rule: z.string().min(5).max(300),
         source: z.string().min(1).max(40).describe("Who is adding it."),
+        confirm_new_category: z.boolean().optional().describe("Set true ONLY to create a brand-new shelf. Without it, a shelf name that does not exist yet is refused (typo guard)."),
       },
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    async (p: { rule: string; source: string }) => {
+    async (p: { rule: string; source: string; confirm_new_category?: boolean }) => {
       if (!canWrite) return needWrite("add_rule");
-      try { return jsonResult(await getLibrarian().addRule(p.rule, p.source)); } catch (e) { return errorResult("Error adding rule", e); }
+      try { return jsonResult(await getLibrarian().addRule(p.rule, p.source, { confirmNewCategory: p.confirm_new_category })); } catch (e) { return errorResult("Error adding rule", e); }
     }
   );
 
@@ -511,6 +527,38 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
     },
     async (p: { min_severity?: Severity; category?: string; since?: string; limit?: number }) => {
       try { return jsonResult((await listFlags(librarianPools().read, "self", p)) as unknown as Record<string, unknown>); } catch (e) { return errorResult("Error listing flags", e); }
+    }
+  );
+
+  // ---------------------------------------------------------- Knowledge graph
+  server.registerTool(
+    "graph_neighbors",
+    {
+      title: "Graph Neighbours of an Entity",
+      description: "Return one entity from the Librarian's knowledge graph plus its linked neighbours, each with the relation, direction and source that proved the link. Depth is clamped to 1 in v1. Read-only.",
+      inputSchema: {
+        entity: z.string().min(1).max(200).describe("Name of the entity to look up, e.g. an agent, project, product or topic name."),
+        depth: z.number().int().min(1).max(10).default(1).describe("How many hops to walk. Optional; v1 always clamps this to 1."),
+      },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (p: { entity: string; depth?: number }) => {
+      const depth = Math.min(p.depth ?? 1, 1);
+      try {
+        const result = await getGraph().neighbors(p.entity, depth);
+        return jsonResult({ installed: true, depth, entity: result.entity, neighbors: result.neighbors });
+      } catch (e) {
+        if (isMissingTable(e)) {
+          return jsonResult({
+            installed: false,
+            note: "The knowledge graph tables are not installed in the database yet (migration 008_graph.sql), so no neighbours can be read.",
+            depth,
+            entity: null,
+            neighbors: [],
+          });
+        }
+        return errorResult("Error reading graph neighbours", e);
+      }
     }
   );
 

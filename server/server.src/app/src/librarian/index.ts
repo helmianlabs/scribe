@@ -5,3 +5,7 @@ export * from './engine.js';
 export * from './presets.js';
 export * from './plainRules.js';
 export * from './learn.js';
+export * from './categories.js';
+export * from './trail.js';
+export * from './repair.js';
+export * from './graph.js';
