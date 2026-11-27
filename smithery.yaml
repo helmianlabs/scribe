@@ -1,0 +1,12 @@
+startCommand:
+  type: sse
+  url: https://scribemem.helmian.cloud/sse
+tools:
+  - name: search_memory
+    description: Search saved memories using ranked full-text search with match snippets.
+  - name: read_memory
+    description: Retrieve the full text of a specific memory record by ID.
+  - name: save_memory
+    description: Save a new persistent memory note, project context, or decision.
+  - name: supersede_memory
+    description: Replace an outdated memory note with an updated version.
