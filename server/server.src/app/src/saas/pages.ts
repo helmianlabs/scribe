@@ -7,11 +7,21 @@ h1{font-size:24px;margin:0 0 8px}h2{font-size:17px;margin:0 0 10px}p.sub{color:#
 input,select{width:100%;box-sizing:border-box;padding:11px 12px;border-radius:8px;border:1px solid #2b323a;background:#0e1216;color:#e9eef3;font-size:15px}
 button{padding:11px 16px;border:0;border-radius:8px;background:#3b82f6;color:#fff;font-size:15px;font-weight:600;cursor:pointer;margin:6px 6px 0 0}
 button.ghost{background:transparent;color:#c7d0d9;border:1px solid #2b323a}button.danger{background:#b91c1c}.err{color:#ff6b6b}.ok{color:#4ade80}.muted{color:#6b7682;font-size:13px}
-table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 4px;border-bottom:1px solid #262b31;vertical-align:top}.sev-critical{color:#f87171}.sev-high{color:#fb923c}.sev-medium{color:#facc15}.sev-low{color:#9aa6b2}`;
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:6px 4px;border-bottom:1px solid #262b31;vertical-align:top}.sev-critical{color:#f87171}.sev-high{color:#fb923c}.sev-medium{color:#facc15}.sev-low{color:#9aa6b2}
+footer{max-width:760px;margin:0 auto;padding:16px 20px 40px;border-top:1px solid #262b31;color:#9aa6b2;font-size:13px}
+footer a{color:#93c5fd;margin-right:14px}footer p{margin:0 0 8px}.plans{display:grid;gap:14px}@media(min-width:700px){.plans{grid-template-columns:1fr 1fr 1fr}}
+.plan h2{margin-bottom:2px}.plan .price{font-size:20px;font-weight:600;margin:0 0 10px}a.in{color:#93c5fd}`;
+
+export const CONTACT_EMAIL = "helmianlabs@gmail.com";
+
+const FOOTER = `<footer>
+<p><a href="/pricing">Pricing</a><a href="/terms">Terms</a><a href="/privacy">Privacy</a><a href="/refunds">Refunds</a></p>
+<p>Contact: <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>
+</footer>`;
 
 export function layout(title: string, body: string, scripts: string[] = []): string {
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}</main>${scripts.map((s) => `<script src="${esc(s)}"></script>`).join("")}</body></html>`;
+<title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}</main>${FOOTER}${scripts.map((s) => `<script src="${esc(s)}"></script>`).join("")}</body></html>`;
 }
 
 export function signInPage(opts: { returnTo?: string | null; error?: string; sent?: string; emailSignIn?: boolean }): string {
@@ -128,6 +138,89 @@ export function mockBillingPage(): string {
 export function paddlePayPage(opts: { token: string; environment: "sandbox" | "production" }): string {
   return layout("Helmian Scribe checkout", `<div class="card" id="pay" data-token="${esc(opts.token)}" data-env="${esc(opts.environment)}"><h1>Opening checkout…</h1><p class="sub" id="paystatus">If nothing opens, allow pop-ups and frames from paddle.com, then reload this page.</p><p><a href="/dashboard" style="color:#93c5fd">Back to dashboard</a></p></div>`,
     ["https://cdn.paddle.com/paddle/v2/paddle.js", "/static/paddle-pay.js"]);
+}
+
+
+const PLANS_HTML = `<div class="plans">
+<div class="card plan"><h2>Free</h2><p class="price">$0</p>
+<p>1,000 memories and 500 calls a day. Try it with no account.</p>
+<p class="muted">A private memory for the AIs you already use.</p></div>
+<div class="card plan"><h2>Personal</h2><p class="price">$8 / month</p>
+<p>Or $80 a year. Unlimited memories for one person.</p>
+<p class="muted">One memory every AI you connect can read and write.</p></div>
+<div class="card plan"><h2>Team</h2><p class="price">$15 / seat / month</p>
+<p>Unlimited memories, billed per seat.</p>
+<p class="muted">A shared memory for a crew and their AIs.</p></div>
+</div>`;
+
+export function homePage(): string {
+  return layout("Scribe Memory", `<div class="card"><h1>Scribe Memory</h1>
+<p class="sub">One memory every AI you use (Claude, ChatGPT and Cursor) can read and write. What one assistant learns can be recalled by the others, so you do not have to explain the same things again.</p>
+<p>Scribe Memory is a hosted memory service for AI assistants, operated by DairyForge LLC. Your memory is private to your account and walled off from everyone else.</p>
+<p>Questions or support: <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+<form method="POST" action="/try" style="display:inline"><button type="submit">Try without signing up</button></form>
+<a href="/login"><button type="button" class="ghost">Sign in</button></a>
+</div>
+<h2>Plans</h2>
+${PLANS_HTML}
+<p class="muted">Prices are in US dollars. Paid plans are billed by <a class="in" href="https://www.paddle.com">Paddle.com</a>, the merchant of record. Paddle handles payments, taxes and refunds. See <a class="in" href="/refunds">Refunds</a> for the 14-day refund window.</p>`);
+}
+
+export function pricingPage(): string {
+  return layout("Pricing — Scribe Memory", `<div class="card"><h1>Pricing</h1>
+<p class="sub">Every plan includes a private memory your AIs can share. Prices are in US dollars.</p></div>
+${PLANS_HTML}
+<div class="card">
+<p>Paid checkout is billed by <a class="in" href="https://www.paddle.com">Paddle.com</a>, the merchant of record. Paddle handles payments, taxes and refunds.</p>
+<p>Personal is $8 a month, or $80 a year. Team is $15 per seat per month. The Free plan is $0, with a limit of 1,000 memories.</p>
+<p>Refunds: you can ask for a refund within 14 days of a charge. Details are on the <a class="in" href="/refunds">Refund policy</a> page.</p>
+<p>Questions: <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+<p><a class="in" href="/try">Try without signing up</a> · <a class="in" href="/login">Sign in</a></p>
+</div>`);
+}
+
+export function termsPage(): string {
+  return layout("Terms of Service — Scribe Memory", `<div class="card"><h1>Terms of Service</h1>
+<p class="muted">Effective date: November 27, 2026</p>
+<p>These terms cover the hosted Scribe Memory service at scribemem.helmian.cloud. The service is operated by DairyForge LLC.</p>
+<h2>The service</h2>
+<p>Scribe Memory is a hosted memory service for AI assistants. You get a private memory. You and the assistants you connect can save notes, facts and files there, and look them up later. The Free plan has a limit of 1,000 memories. Paid plans and prices are listed on the <a class="in" href="/pricing">pricing</a> page.</p>
+<h2>Your account</h2>
+<p>You can start without an account, or sign in with your email. You are responsible for the email you use and for what you and your assistants save in your memory. Do not try to reach another person's memory, overload the service, or use it for anything illegal.</p>
+<h2>Payments</h2>
+<p>When you buy a Personal or Team plan, <a class="in" href="https://www.paddle.com">Paddle.com</a> is the merchant of record. Paddle handles the payment, taxes, invoices and refunds. DairyForge LLC does not take or store your card details. Refunds are described in the <a class="in" href="/refunds">Refund policy</a>.</p>
+<h2>Changes and ending use</h2>
+<p>We may change the service or these terms. When we do, we will post the new terms on this page. You can stop using the service at any time. We may suspend or close an account that breaks these terms.</p>
+<p>Questions: <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+</div>`);
+}
+
+export function privacyPage(): string {
+  return layout("Privacy Policy — Scribe Memory", `<div class="card"><h1>Privacy Policy</h1>
+<p class="muted">Effective date: November 27, 2026</p>
+<p>This policy covers the hosted Scribe Memory service at scribemem.helmian.cloud, operated by DairyForge LLC. Contact: <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+<h2>What we collect</h2>
+<p>If you sign in, we store the email address you give us. If you try the service without an account, we create a private guest memory for you. We store the memories, files and settings that you and your connected assistants save. We also keep technical logs needed to run and secure the service, such as connection times and error reports.</p>
+<h2>Payments</h2>
+<p>If you buy a plan, <a class="in" href="https://www.paddle.com">Paddle.com</a> is the merchant of record and handles payment details. We do not store your full card number. Paddle's own privacy policy applies to the payment information you give Paddle.</p>
+<h2>How we use this</h2>
+<p>We use this information to provide your memory, sign you in, apply plan limits, and keep the service secure. We do not sell your memories or your email. Your memory is stored in a space for your account; other customers cannot read it. We use infrastructure providers (hosting and database) to run the service.</p>
+<h2>Cookies and your choices</h2>
+<p>We use a sign-in cookie so you can stay signed in. You can export your memories from the dashboard. To ask us to delete your account, email <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+<p>If we change this policy, we will post the update on this page.</p>
+</div>`);
+}
+
+export function refundsPage(): string {
+  return layout("Refund Policy — Scribe Memory", `<div class="card"><h1>Refund Policy</h1>
+<p class="muted">Effective date: November 27, 2026</p>
+<p>This policy covers paid Personal and Team plans for the hosted Scribe Memory service, operated by DairyForge LLC.</p>
+<p>If you buy a plan and you are not satisfied, you can ask for a refund within 14 days of the charge.</p>
+<p><a class="in" href="https://www.paddle.com">Paddle.com</a> is the merchant of record. Paddle handles payments, taxes and refunds.</p>
+<p>To request a refund, email <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a> and include the email address used on the purchase. We will work with Paddle to process the refund.</p>
+<p>After 14 days, refunds are decided case by case. The Free plan has no charge, so there is nothing to refund.</p>
+<p>Prices are listed on the <a class="in" href="/pricing">pricing</a> page. Questions: <a class="in" href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.</p>
+</div>`);
 }
 
 /**

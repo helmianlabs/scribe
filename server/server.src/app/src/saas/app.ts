@@ -27,7 +27,7 @@ import { MAILBOXES, canonicalMailbox } from "../courier/mailboxes.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
-import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS, tryPage, tryReadyPage, installCommands } from "./pages.js";
+import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS, tryPage, tryReadyPage, installCommands, homePage, pricingPage, termsPage, privacyPage, refundsPage } from "./pages.js";
 
 const COOKIE = "smm_session";
 
@@ -125,8 +125,20 @@ export function createSaasApp(deps: SaasDeps) {
   };
 
   // ---------------------------------------------------------------- public pages + sign-in
-  app.get("/", (_req, res) => res.json({ name: "scribe-memory", product: "Scribe Memory", mode: "saas", status: "ok", try: `${cfg.publicUrl}/try`, sign_in: `${cfg.publicUrl}/login` }));
+  app.get("/", (req, res) => {
+    const accept = String(req.headers.accept || "");
+    const wantsJson = accept.includes("application/json") && !accept.includes("text/html");
+    if (wantsJson) {
+      res.json({ name: "scribe-memory", product: "Scribe Memory", mode: "saas", status: "ok", try: `${cfg.publicUrl}/try`, sign_in: `${cfg.publicUrl}/login`, pricing: `${cfg.publicUrl}/pricing` });
+      return;
+    }
+    html(res, 200, homePage());
+  });
   app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+  app.get("/pricing", (_req, res) => html(res, 200, pricingPage()));
+  app.get("/terms", (_req, res) => html(res, 200, termsPage()));
+  app.get("/privacy", (_req, res) => html(res, 200, privacyPage()));
+  app.get("/refunds", (_req, res) => html(res, 200, refundsPage()));
   app.get("/try", (_req, res) => html(res, 200, tryPage()));
   app.post("/try", limiter(10, 60 * 60 * 1000), express.urlencoded({ extended: false }), express.json(), wrap(async (req, res) => {
     if (!sameOrigin(req)) { res.status(403).json({ error: "Bad origin." }); return; }
