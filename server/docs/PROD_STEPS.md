@@ -1,5 +1,12 @@
 # Production status and remaining steps
 
+> **Historical document.** The status and steps below are the 2026-10-22 state (server v1.2.0, Librarian
+> migration 001 not yet applied). They are kept for the record and are **out of date**: the live servers have
+> since moved on (graph tables applied, door in front). For what runs now, see
+> [`live-snapshots/2026-11-26-hetzner/README.md`](../../live-snapshots/2026-11-26-hetzner/README.md); for the
+> current change set and the deploy checklist, see [`docs/LIBRARIAN-AUDIT-FIXES.md`](../../docs/LIBRARIAN-AUDIT-FIXES.md).
+> Migration 008 (graph) is `migrations/008_graph.sql`; the backfill now runs `scripts/backfill.ts --dry|--refile`.
+
 ## Live now (2026-10-22, ~02:21 MDT)
 - Server v1.2.0 (image `claude-memory-mcp:librarian-20261022-082053`) at https://<SERVER_HOST>/mcp.
   Tools: search_memory, save_memory, list_unsorted, explain_filing, move_memory, add_rule.

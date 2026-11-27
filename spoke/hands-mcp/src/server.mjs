@@ -32,7 +32,7 @@ function pickSignal(...signals) {
 export const WRITE_FILE_ANNOTATIONS = Object.freeze({ readOnlyHint: false, destructiveHint: true, openWorldHint: false });
 
 export function buildMcpServer(hands, auth, hooks = {}) {
-  const server = new McpServer({ name: 'scribe-hands', version: '0.1.0' });
+  const server = new McpServer({ name: 'scribe-hands', version: '1.1.0' });
   const ro = { readOnlyHint: true, destructiveHint: false, openWorldHint: false };
   const act = { readOnlyHint: false, destructiveHint: true, openWorldHint: true };
   // Saving a text file is local (not open-world). Marking it open-world +
