@@ -14,6 +14,8 @@
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 import { DATABASE_URL, DATABASE_WRITE_URL } from "./config.js";
+import { searchRanked, searchModeFromEnv, type RankedSearch } from "./recall.js";
+import { embedderFromEnv, storeEmbeddings, semanticModeFromEnv } from "./embeddings.js";
 
 const { Pool } = pg;
 
@@ -85,6 +87,36 @@ export async function searchMemory(params: SearchParams): Promise<MemoryRow[]> {
         : String(r.created_at),
     snippet: r.snippet ?? "",
   }));
+}
+
+// ---------------------------------------------------------------------------
+// Ranked recall (recall.ts). SCRIBE_SEARCH=substring switches back to the old
+// newest-first ILIKE search above. Meaning-based search is OFF unless
+// SCRIBE_EMBEDDINGS=local (see embeddings.ts); read pool only.
+// ---------------------------------------------------------------------------
+export const SEARCH_MODE = searchModeFromEnv();
+const embedder = embedderFromEnv();
+export const EMBEDDINGS_ON = Boolean(embedder);
+
+export async function searchMemoryRanked(params: SearchParams & { maxTokens?: number }): Promise<RankedSearch> {
+  return searchRanked(pool, {
+    query: params.query,
+    since: params.since,
+    limit: params.limit,
+    maxTokens: params.maxTokens,
+    embedder,
+    semanticMode: semanticModeFromEnv(),
+  });
+}
+
+/** After a save has committed: store its passage vectors when meaning search is on. Never throws. */
+export async function embedSavedMemory(messageId: number, text: string): Promise<number> {
+  if (!embedder) return 0;
+  try {
+    return await storeEmbeddings(writePool, messageId, text, embedder);
+  } catch {
+    return 0;
+  }
 }
 
 export interface FullMessage {

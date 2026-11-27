@@ -10,10 +10,10 @@
   "scripts": {
     "check": "node scripts/check-spoke.mjs",
     "stage:spoke": "node scripts/stage-spoke.mjs",
-    "install:all": "npm ci --prefix spoke/hands-mcp && npm ci --prefix server && npm ci --prefix server/server.src/app && npm ci --prefix door",
+    "install:all": "npm ci --prefix spoke/hands-mcp && npm ci --prefix server && npm ci --prefix server/server.src/app && npm ci --prefix server/personal && npm ci --prefix door",
     "test:spoke": "node --test spoke/test/*.test.mjs",
     "test:hub": "cd spoke/hands-mcp && node --test test/*.test.mjs",
-    "test:server": "npm test --prefix server && npm test --prefix server/server.src/app",
+    "test:server": "npm test --prefix server && npm test --prefix server/server.src/app && npm test --prefix server/personal && npm run typecheck --prefix server/personal",
     "test:door": "npm test --prefix door",
     "test:guard": "cd guard && node --test executive-guard/test/*.test.mjs extension/test/*.test.mjs",
     "test": "npm run check && npm run test:spoke && npm run test:hub && npm run test:server && npm run test:door && npm run test:guard",

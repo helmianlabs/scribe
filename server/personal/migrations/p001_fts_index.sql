@@ -1,0 +1,12 @@
+-- p001_fts_index.sql — PERSONAL single-user claude_memory database only. OPTIONAL, ADDITIVE, NOT APPLIED.
+-- Full-text index behind ranked search_memory (src/recall.ts). Ranked search works without it (each search then
+-- computes the text vectors on the fly, slower on a large archive); this index only makes it fast.
+-- Changes no row, column or table. Idempotent. Not for the hosted database (that one has 011_recall_quality.sql).
+-- NEVER apply the hosted migrations 005, 011 or 012 to claude_memory.
+--
+-- Run as the database owner, OUTSIDE a transaction (CONCURRENTLY builds the index without blocking saves):
+--   psql "$OWNER_URL" -f p001_fts_index.sql
+-- If a concurrent build is interrupted it leaves an INVALID index; drop it with p001_fts_index.down.sql and re-run.
+-- The expression must stay identical to the one in src/recall.ts, or the planner will not use the index.
+-- Rollback: p001_fts_index.down.sql
+CREATE INDEX CONCURRENTLY IF NOT EXISTS messages_text_fts ON messages USING GIN (to_tsvector('english', coalesce(text, '')));

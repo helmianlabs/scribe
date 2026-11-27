@@ -7,7 +7,7 @@
  */
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { searchMemory, saveMemory, getMessageById, mailboxDigest, librarianPools } from "./db.js";
+import { searchMemory, searchMemoryRanked, embedSavedMemory, SEARCH_MODE, saveMemory, getMessageById, mailboxDigest, librarianPools } from "./db.js";
 import { Librarian } from "./librarian-tools.js";
 import { KnowledgeGraph } from "./librarian/graph.js";
 import { registerPostOfficeTools, withInboxHint, SERVER_INSTRUCTIONS } from "./courier/tools.js";
@@ -19,7 +19,7 @@ const SearchMemoryInputSchema = z
       .string()
       .min(1, "query must not be empty")
       .max(500, "query must not exceed 500 characters")
-      .describe("Substring to search for (case-insensitive ILIKE) within message text."),
+      .describe("What to look for: a few key words (matched as words, with stemming) or an exact phrase."),
     since: z
       .string()
       .optional()
@@ -33,10 +33,60 @@ const SearchMemoryInputSchema = z
       .max(200)
       .default(20)
       .describe("Maximum number of matching messages to return (default 20, max 200)."),
+    max_tokens: z
+      .number()
+      .int()
+      .min(100)
+      .max(20000)
+      .optional()
+      .describe("Optional size budget for the results, in tokens (default 2000). Results stop before the budget is passed."),
   })
   .strict();
 
 type SearchMemoryInput = z.infer<typeof SearchMemoryInputSchema>;
+
+const LEGACY_SEARCH_DESCRIPTION = `Scribe — Search The owner's archived Claude conversation history for messages matching a query string.
+
+Performs a case-insensitive substring (ILIKE) search over the text of every message across all archived conversations, joined to the conversation they belong to. Results are ordered newest-first.
+
+Args:
+  - query (string, required): substring to match within message text.
+  - since (string, optional): ISO-8601 date/datetime lower bound on message timestamp.
+  - limit (number, optional): max results, 1-200 (default 20).
+
+Returns: a JSON array of objects, each:
+  {
+    "id": number,                 // stable message id — pass it to read_memory to fetch the full text
+    "conversation_name": string,  // title of the conversation the message is in
+    "sender": string,             // "human" or "assistant"
+    "created_at": string,         // ISO-8601 timestamp of the message
+    "snippet": string             // first 300 characters of the message text
+  }
+
+Examples:
+  - "find when we discussed Saadi pricing" -> { query: "Saadi" }
+  - "detention talk since June" -> { query: "detention", since: "2026-06-01" }
+
+Returns an empty array if nothing matches. This is read-only; it never modifies data.`;
+
+const RANKED_SEARCH_DESCRIPTION = `Scribe — Search The owner's shared memory (every archived conversation and every saved memory) for what matches a query.
+
+Results are ranked by relevance (word match with stemming, an exact phrase ranks higher), not by date. Each snippet is cut around the matching words, not just the first 300 characters. A memory that only repeats what a higher result already shows is folded into it (similar_hidden counts them), so a few results cover more ground.
+
+Args:
+  - query (string, required): a few key words, or an exact phrase.
+  - since (string, optional): ISO-8601 date/datetime lower bound on message timestamp.
+  - limit (number, optional): max results, 1-200 (default 20).
+  - max_tokens (number, optional): size budget for the results (default 2000).
+
+Returns: { total, returned, total_matches, est_tokens, results: [ { "id", "conversation_name", "sender", "created_at", "snippet", "whole", "score", "similar_hidden"? } ] }
+  - id: stable message id — pass it to read_memory for the full text (not needed when whole is true).
+
+Examples:
+  - "find when we discussed Saadi pricing" -> { query: "Saadi pricing" }
+  - "detention talk since June" -> { query: "detention", since: "2026-06-01" }
+
+Returns an empty results array if nothing matches. This is read-only; it never modifies data.`;
 
 let librarian: Librarian | null = null;
 function getLibrarian(): Librarian {
@@ -105,29 +155,7 @@ export function buildMcpServer(scopes: string[] = [], identity: { clientId?: str
     "search_memory",
     {
       title: "Search Conversation Memory",
-      description: `Scribe — Search The owner's archived Claude conversation history for messages matching a query string.
-
-Performs a case-insensitive substring (ILIKE) search over the text of every message across all archived conversations, joined to the conversation they belong to. Results are ordered newest-first.
-
-Args:
-  - query (string, required): substring to match within message text.
-  - since (string, optional): ISO-8601 date/datetime lower bound on message timestamp.
-  - limit (number, optional): max results, 1-200 (default 20).
-
-Returns: a JSON array of objects, each:
-  {
-    "id": number,                 // stable message id — pass it to read_memory to fetch the full text
-    "conversation_name": string,  // title of the conversation the message is in
-    "sender": string,             // "human" or "assistant"
-    "created_at": string,         // ISO-8601 timestamp of the message
-    "snippet": string             // first 300 characters of the message text
-  }
-
-Examples:
-  - "find when we discussed Saadi pricing" -> { query: "Saadi" }
-  - "detention talk since June" -> { query: "detention", since: "2026-06-01" }
-
-Returns an empty array if nothing matches. This is read-only; it never modifies data.`,
+      description: SEARCH_MODE === "substring" ? LEGACY_SEARCH_DESCRIPTION : RANKED_SEARCH_DESCRIPTION,
       inputSchema: SearchMemoryInputSchema.shape,
       annotations: {
         readOnlyHint: true,
@@ -138,6 +166,20 @@ Returns an empty array if nothing matches. This is read-only; it never modifies 
     },
     async (params: SearchMemoryInput) => {
       try {
+        if (SEARCH_MODE === "ranked") {
+          const ranked = await searchMemoryRanked({
+            query: params.query,
+            since: params.since,
+            limit: params.limit ?? 20,
+            maxTokens: params.max_tokens,
+          });
+          const output = { total: ranked.results.length, ...ranked };
+          const block = await mailboxBlock();
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify(output) + block }],
+            structuredContent: output,
+          };
+        }
         const rows = await searchMemory({
           query: params.query,
           since: params.since,
@@ -371,6 +413,7 @@ Requires the memory.write OAuth scope. Returns the notebook name, conversation u
           source: params.source,
           conversationName: saved.conversation_name,
         });
+        await embedSavedMemory(saved.message_id, params.tags?.length ? `[tags: ${params.tags.join(", ")}]\n${params.content}` : params.content);
         const output = { saved: true, ...saved, filed_in: filing.category, filing_tags: filing.tags, filing_reason: filing.explanation, filing_recorded: filing.recorded };
         const block = await mailboxBlock();
         return {
