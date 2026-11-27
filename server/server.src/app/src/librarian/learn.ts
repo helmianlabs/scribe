@@ -1,4 +1,5 @@
 import type { MemoryItem, Rule, Rulebook } from './types.js';
+import { UNSORTED } from './types.js';
 import { classify } from './engine.js';
 import { parseTags, stripTagLine } from './parse.js';
 import { findWords } from './match.js';
@@ -42,9 +43,14 @@ export function learnFromMove(item: MemoryItem, toCategory: string, book: Rulebo
   const taken = new Set(existing.flatMap((r) => r.when.anyWords ?? []));
   for (const word of candidateTriggers(item).slice(0, 15)) {
     if (taken.has(word)) continue;
-    // Reject a word that appears in reference items currently filed elsewhere (would cause wrong moves).
-    const collisions = reference.filter((r) => r.id !== item.id && findWords(stripTagLine(r.text), [word]).length
-      && classify(r, book, existing).category !== toCategory).length;
+    // Reject a word only when it would pull a memory OFF a shelf it is really on. A reference memory that is
+    // still in the unsorted tray is not a conflict: the new rule would file it, which is the point of learning.
+    // (Before this fix, one unsorted memory sharing the word blocked the whole lesson.)
+    const collisions = reference.filter((r) => {
+      if (r.id === item.id || !findWords(stripTagLine(r.text), [word]).length) return false;
+      const cat = classify(r, book, existing).category;
+      return cat !== UNSORTED && cat !== toCategory;
+    }).length;
     if (collisions > 0) continue;
     const rule: Rule = {
       id: `learned.${toCategory}.${word}`.replace(/[^a-z0-9._/-]/gi, '_'),

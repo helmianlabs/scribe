@@ -6,12 +6,12 @@ import { isMailboxCategory } from "../courier/mailboxes.js";
 import { randomUUID } from "node:crypto";
 import type { Q } from "./db.js";
 import {
-  classify, learnFromMove, parsePlainRule, PRESETS, UNSORTED,
-  type Filing, type MemoryItem, type Rule, type Rulebook,
+  checkCategory, classify, knownCategories, learnFromMove, parsePlainRule, planBackfill, PLAIN_RULE_HELP, PRESETS, trailOf, trailSummary, UNSORTED, withRetry,
+  type Filing, type MemoryItem, type RetryOptions, type Rule, type Rulebook,
 } from "../librarian/index.js";
 import { LimitError, type Plan } from "./plans.js";
 
-export const ENGINE_VERSION = "librarian-0.1.0+saas";
+export const ENGINE_VERSION = "librarian-0.3.0+saas";
 
 const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : String(d));
 
@@ -100,8 +100,10 @@ export async function saveMemory(q: Q, tenantId: string, plan: Plan, p: SavePara
 }
 
 // ------------------------------------------------------------------ Librarian (tenant scoped)
+const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
 export class TenantLibrarian {
-  constructor(private q: Q, private tenantId: string) {}
+  constructor(private q: Q, private tenantId: string, private retry: RetryOptions = {}) {}
 
   async rulebook(): Promise<Rulebook> {
     const r = await this.q.query("SELECT rulebook FROM librarian_settings WHERE tenant_id = $1 ORDER BY chosen_at DESC, id DESC LIMIT 1", [this.tenantId]);
@@ -121,10 +123,64 @@ export class TenantLibrarian {
       [this.tenantId, messageId, f.category, f.tags, f.shape, f.source, f.rulebook, f.winningRule, f.explanation, JSON.stringify(f.hits), filedBy, ENGINE_VERSION]);
   }
 
-  async fileSaved(item: MemoryItem) {
+  /**
+   * Runs `fn` inside a SAVEPOINT. The caller's tenant transaction also holds the saved memory: without the savepoint, one
+   * failed filing statement would abort that whole transaction and lose the memory. Failed attempts roll back to the savepoint.
+   */
+  private async guarded<T>(fn: () => Promise<T>): Promise<T> {
+    return withRetry(async () => {
+      await this.q.query("SAVEPOINT librarian_op");
+      try {
+        const out = await fn();
+        await this.q.query("RELEASE SAVEPOINT librarian_op");
+        return out;
+      } catch (err) {
+        await this.q.query("ROLLBACK TO SAVEPOINT librarian_op").catch(() => {});
+        throw err;
+      }
+    }, this.retry);
+  }
+
+  /** Never throws: a failed write is retried, then reported (stderr + `error`); the memory waits in the tray as "Not filed yet". */
+  async fileSaved(item: MemoryItem): Promise<{ category: string; tags: string[]; explanation: string; recorded: boolean; error?: string }> {
     const f = classify(item, await this.rulebook(), await this.extraRules());
-    await this.record(Number(item.id), f, "librarian");
-    return { category: f.category, tags: f.tags, explanation: f.explanation, recorded: true };
+    try {
+      await this.guarded(() => this.record(Number(item.id), f, "librarian"));
+      return { category: f.category, tags: f.tags, explanation: f.explanation, recorded: true };
+    } catch (err) {
+      console.error(`[librarian] tenant ${this.tenantId}: could not record the filing of memory ${item.id} after retries (it stays in the unsorted tray as "Not filed yet"): ${errText(err)}`);
+      return { category: f.category, tags: f.tags, explanation: f.explanation, recorded: false, error: errText(err) };
+    }
+  }
+
+  /** The repair path: re-file this tenant's unsorted tray (filed as unsorted or never filed) with the CURRENT rules. */
+  async refileUnsorted(limit = 200): Promise<{ examined: number; refiled: number; stillUnsorted: number }> {
+    const [book, extra] = [await this.rulebook(), await this.extraRules()];
+    const r = await this.q.query(
+      `SELECT m.id, m.text, m.sender, c.name AS conv, (f.message_id IS NULL) AS never_filed
+         FROM memory_unsorted u
+         JOIN messages m ON m.id = u.message_id AND m.tenant_id = u.tenant_id
+         LEFT JOIN conversations c ON c.uuid = m.conversation_uuid AND c.tenant_id = m.tenant_id
+         LEFT JOIN memory_current_filing f ON f.message_id = m.id AND f.tenant_id = m.tenant_id
+        WHERE u.tenant_id = $1
+        ORDER BY m.id DESC LIMIT $2`, [this.tenantId, Math.min(Math.max(limit, 1), 1000)]);
+    const items: MemoryItem[] = r.rows.map((x) => ({ id: Number(x.id), text: x.text ?? "", sender: x.sender, conversationName: x.conv }));
+    const current = new Map<string, string>(r.rows.filter((x) => !x.never_filed).map((x) => [String(x.id), UNSORTED]));
+    const plan = planBackfill(items, current, book, extra);
+    for (const f of plan.toWrite) await this.record(Number(f.itemId), f, "backfill");
+    return { examined: plan.examined, refiled: plan.toWrite.filter((f) => f.category !== UNSORTED).length, stillUnsorted: plan.stillUnsorted };
+  }
+
+  private async refileSoft() {
+    try {
+      await this.q.query("SAVEPOINT librarian_refile");
+      const out = await this.refileUnsorted();
+      await this.q.query("RELEASE SAVEPOINT librarian_refile");
+      return out;
+    } catch (err) {
+      await this.q.query("ROLLBACK TO SAVEPOINT librarian_refile").catch(() => {});
+      return { error: errText(err) };
+    }
   }
 
   async listUnsorted(limit: number) {
@@ -142,20 +198,34 @@ export class TenantLibrarian {
     return x ? { id: Number(x.id), text: x.text ?? "", sender: x.sender, conversationName: x.conv } : null;
   }
 
+  /** Which shelf, the deciding rule, and EVERY rule that matched (the full trail). */
   async explain(id: number) {
     const r = await this.q.query(
-      "SELECT category, tags, rule_key, explanation, filed_by, filed_at FROM memory_current_filing WHERE tenant_id = $1 AND message_id = $2", [this.tenantId, id]);
-    if (r.rows[0]) return { recorded: true, ...r.rows[0], filed_at: iso(r.rows[0].filed_at) };
+      "SELECT category, tags, rule_key, explanation, hits, filed_by, filed_at FROM memory_current_filing WHERE tenant_id = $1 AND message_id = $2", [this.tenantId, id]);
+    if (r.rows[0]) {
+      const { hits, ...rest } = r.rows[0];
+      const matched_rules = trailOf(hits, rest.rule_key, rest.category);
+      return { recorded: true, ...rest, filed_at: iso(rest.filed_at), matched_rules, trail_summary: trailSummary(matched_rules) };
+    }
     const item = await this.loadItem(id);
     if (!item) return { error: `No memory with id ${id}` };
     const f = classify(item, await this.rulebook(), await this.extraRules());
-    return { recorded: false, note: "Not recorded yet; this is how the Librarian would file it now.", category: f.category, tags: f.tags, rule_key: f.winningRule, explanation: f.explanation };
+    const matched_rules = trailOf(f.hits, f.winningRule, f.category);
+    return { recorded: false, note: "Not recorded yet; this is how the Librarian would file it now.", category: f.category, tags: f.tags, rule_key: f.winningRule, explanation: f.explanation, matched_rules, trail_summary: trailSummary(matched_rules) };
   }
 
-  async move(id: number, toCategory: string, movedBy: string) {
+  private async knownShelves(book: Rulebook, extra: Rule[]) {
+    const filed = (await this.q.query("SELECT DISTINCT category FROM memory_current_filing WHERE tenant_id = $1", [this.tenantId])).rows.map((x) => String(x.category));
+    return knownCategories(book, extra, filed);
+  }
+
+  async move(id: number, toCategory: string, movedBy: string, opts: { confirmNewCategory?: boolean } = {}) {
     const item = await this.loadItem(id);
     if (!item) return { error: `No memory with id ${id}` };
     const [book, extra] = [await this.rulebook(), await this.extraRules()];
+    const check = checkCategory(toCategory, await this.knownShelves(book, extra), opts.confirmNewCategory === true);
+    if (!check.ok) return { moved: false, needs_confirmation: true, did_you_mean: check.didYouMean, note: check.note };
+    toCategory = check.slug;
     const before = classify(item, book, extra);
     const ref = (await this.q.query(
       "SELECT m.id, m.text, m.sender, c.name AS conv FROM messages m LEFT JOIN conversations c ON c.uuid = m.conversation_uuid AND c.tenant_id = m.tenant_id WHERE m.tenant_id = $1 ORDER BY m.id DESC LIMIT 500",
@@ -165,16 +235,32 @@ export class TenantLibrarian {
       : learnFromMove(item, toCategory, book, extra, ref);
     if (rule) await this.q.query("INSERT INTO librarian_rules (tenant_id, rule_key, layer, rule_json, created_by) VALUES ($1,$2,'learned',$3,$4)", [this.tenantId, rule.id, JSON.stringify(rule), movedBy]);
     await this.q.query("INSERT INTO memory_moves (tenant_id, message_id, from_category, to_category, learned_rule, moved_by) VALUES ($1,$2,$3,$4,$5,$6)", [this.tenantId, id, before.category, toCategory, rule?.id ?? null, movedBy]);
-    await this.record(id, { ...before, category: toCategory, winningRule: rule?.id ?? null, explanation: `Moved here by ${movedBy}. ${note}` }, "manual");
-    return { moved: true, from: before.category, to: toCategory, learned_rule: rule?.id ?? null, note };
+    // Stored matches are refreshed: the rules that match NOW (including the one just learned) plus the hand move itself.
+    const after = classify(item, book, rule ? [...extra, rule] : extra);
+    const manualHit = { ruleId: "manual.move", layer: "manual" as const, category: toCategory, priority: 10000, matched: [`moved by ${movedBy}`], description: `You moved it to "${toCategory}" by hand.` };
+    await this.record(id, { ...after, category: toCategory, winningRule: rule?.id ?? null, hits: [manualHit, ...after.hits], explanation: `Moved here by ${movedBy}. ${note}` }, "manual");
+    const refiled = rule ? await this.refileSoft() : undefined;
+    return { moved: true, from: before.category, to: toCategory, learned_rule: rule?.id ?? null, note, ...(refiled ? { refiled_unsorted: refiled } : {}) };
   }
 
-  async addRule(sentence: string, createdBy: string) {
-    const n = (await this.q.query("SELECT count(*)::int AS n FROM librarian_rules WHERE tenant_id = $1 AND layer = 'custom'", [this.tenantId])).rows[0].n as number;
-    const rule = parsePlainRule(sentence, `custom.${n + 1}`);
-    if (!rule) return { added: false, note: 'I could not read that rule. Try: "anything mentioning X goes in Y".' };
+  async addRule(sentence: string, createdBy: string, opts: { confirmNewCategory?: boolean } = {}) {
+    const probe = parsePlainRule(sentence, "custom.probe");
+    if (!probe) return { added: false, note: `I could not read that rule. ${PLAIN_RULE_HELP}` };
+    const [book, extra] = [await this.rulebook(), await this.extraRules()];
+    let category = probe.category;
+    if (category) {
+      const check = checkCategory(category, await this.knownShelves(book, extra), opts.confirmNewCategory === true);
+      if (!check.ok) return { added: false, needs_confirmation: true, did_you_mean: check.didYouMean, note: check.note };
+      category = check.slug;
+    }
+    // Unique id under concurrency: serialise rule creation per tenant for the rest of this transaction, then take max + 1.
+    await this.q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`librarian_rule:${this.tenantId}`]);
+    const n = (await this.q.query(
+      "SELECT COALESCE(MAX(substring(rule_key from 8)::int), 0) + 1 AS n FROM librarian_rules WHERE tenant_id = $1 AND rule_key ~ '^custom\\.[0-9]+$'", [this.tenantId])).rows[0].n as number;
+    const rule = { ...parsePlainRule(sentence, `custom.${n}`)!, category };
     await this.q.query("INSERT INTO librarian_rules (tenant_id, rule_key, layer, rule_json, plain_text, created_by) VALUES ($1,$2,'custom',$3,$4,$5)", [this.tenantId, rule.id, JSON.stringify(rule), sentence, createdBy]);
-    return { added: true, rule_key: rule.id, category: rule.category, when: rule.when };
+    const refiled = await this.refileSoft();
+    return { added: true, rule_key: rule.id, category: rule.category, when: rule.when, refiled_unsorted: refiled };
   }
 }
 export { UNSORTED };

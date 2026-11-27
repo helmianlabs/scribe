@@ -1,4 +1,5 @@
 import type { Rule, Rulebook } from './types.js';
+import { ENTITY_RULES } from './entities.js';
 import { AI_TOOLS, CODE_WORDS, DESIGN, FINANCE, JOB_TALK, MARKETING, PERSONAL, PLANNING, PRODUCT_CONTEXT, PROJECTS, RESEARCH } from './vocab.js';
 
 /**
@@ -12,6 +13,8 @@ const allWords = (p: { words: string[]; weak?: string[] }) => [...p.words, ...(p
 const STRONG_WORDS = Object.values(PROJECTS).flatMap((p) => p.words);
 /** Business words that are also plain day-job talk (equipment and product words like silo, pump, wash stay out). */
 const JOB_WEAK = ['milk', 'hauling', 'hauler', 'haulers', 'milk hauler', 'milk pickup', 'tanker', 'dairy', 'dairyman', 'dairymen', 'freight', 'loads', 'trucking', 'dispatch'];
+/** Words that are plainly about money (a narrower list than FINANCE: no price/pricing/revenue/subscription, which are product words). */
+const FINANCE_STRICT = ['invoice', 'invoices', 'payment', 'payments', 'paid', 'refund', 'receipt', 'payroll', 'tax', 'taxes', 'irs', 'expense', 'expenses', 'bank', 'loan', 'owe', 'owed', 'dollars', 'budget'];
 /** Sam's names for his AI helpers; "Big Sister" is Claude, not family. */
 const AI_NICKNAMES = ['big sister', 'big brother', 'big brother claude', 'big sister claude'];
 
@@ -149,6 +152,7 @@ export const PRESET_D: Rulebook = {
   categories: [
     { slug: 'personal', name: 'Personal' }, { slug: 'finance', name: 'Finance' }, { slug: 'code', name: 'Code' },
     { slug: 'business', name: 'Business (general)' }, { slug: 'ai-tools', name: 'AI tools & agents' },
+    { slug: 'people', name: 'People' }, { slug: 'places', name: 'Places' }, { slug: 'organizations', name: 'Organizations & customers' },
     ...projectCats.map((c) => ({ ...c, parent: 'business' })),
   ],
   ignore: INFRA_IGNORE,
@@ -161,6 +165,8 @@ export const PRESET_D: Rulebook = {
     // DairyForge's product context outranks a notebook name; generic trucking-product talk (Forge TMS) sits just
     // below notebooks, so inside a DairyForge conversation it stays DairyForge.
     ...projectContextRules((slug) => (slug === 'forge-tms' ? 545 : 590)),
+    // Money outranks the day job: "invoice from <a trucking company>" is Finance, not hauling talk.
+    { id: 'content.finance-job', layer: 'content', when: { anyWords: FINANCE_STRICT, withAny: [...JOB_TALK, ...JOB_WEAK], noneWords: [...STRONG_WORDS, ...AI_NICKNAMES] }, category: 'finance', priority: 568, description: 'Money (invoice, payment, tax, ...) mixed with day-job words: money outranks the day job.', addTags: ['money', 'job'] },
     { id: 'content.job-talk', layer: 'content', when: { shape: ['chat'], anyWords: [...JOB_TALK, ...JOB_WEAK], noneWords: [...STRONG_WORDS, ...PRODUCT_CONTEXT] }, category: 'personal', priority: 560, description: 'Driving and hauling talk (the day job), with no business named and nothing about the product.', addTags: ['job'] },
     ...projectNotebookRules(550, '', true),
     topic('content.finance', 'finance', FINANCE, 400, 'Money with no business named (invoices, payments, tax).', ['money']),
@@ -168,6 +174,7 @@ export const PRESET_D: Rulebook = {
     topic('content.code-words', 'code', CODE_WORDS, 190, 'Technical words, no business named.'),
     topic('content.business', 'business', [...MARKETING, 'customer', 'customers', 'client', 'sales', 'business', 'llc', 'pitch', 'investor', 'investors', 'licensing', 'insurance', 'pilot', 'launch', 'contract'], 180, 'General business, no specific business named.'),
     topic('content.ai-tools', 'ai-tools', AI_TOOLS, 170, 'About the AI tools themselves (Claude, ChatGPT, agents, handoffs).'),
+    ...ENTITY_RULES([...AI_TOOLS, ...AI_NICKNAMES]),
     ...sharedTagRules,
   ],
 };

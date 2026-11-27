@@ -29,7 +29,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   const { db, tenant, scopes } = ctx;
   const plan = planFor(tenant.plan, ctx.limitsOverride as never);
   const canWrite = scopes.includes("memory.write");
-  const server = withInboxHint(new McpServer({ name: "helmian-scribe", title: "Helmian Scribe", version: "2.0.0-saas" }, { instructions: SERVER_INSTRUCTIONS }));
+  const server = withInboxHint(new McpServer({ name: "helmian-scribe", title: "Helmian Scribe", version: "1.1.0-saas" }, { instructions: SERVER_INSTRUCTIONS }));
 
   /** Meter + run in a tenant transaction; limits and errors become plain tool errors. */
   async function run(kind: "call" | "save", fn: (q: Parameters<Parameters<Db["tenant"]>[1]>[0]) => Promise<Record<string, unknown>>) {
@@ -110,7 +110,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
       let filing: Record<string, unknown> = {};
       try {
         const f = await new TenantLibrarian(q, tenant.id).fileSaved({ id: saved.message_id, text: saved.text, sender: p.source, source: p.source, conversationName: saved.conversation_name });
-        filing = { filed_in: f.category, filing_tags: f.tags, filing_reason: f.explanation, filing_recorded: f.recorded };
+        filing = { filed_in: f.category, filing_tags: f.tags, filing_reason: f.explanation, filing_recorded: f.recorded, ...(f.error ? { filing_error: f.error } : {}) };
       } catch (e) { filing = { filed_in: "unsorted", filing_reason: `Librarian error: ${(e as Error).message}`, filing_recorded: false }; }
       const flagged = await recordFlags(q, tenant.id, findingsToFlags(prepared.findings, { source_ai: p.source, reporter: "server", message_id: saved.message_id }), alertTargetFor(tenant, ctx.publicUrl));
       const { text: _t, ...rest } = saved;
@@ -125,27 +125,27 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   }, async (p: { limit?: number }) => run("call", (q) => new TenantLibrarian(q, tenant.id).listUnsorted(p.limit ?? 20)));
 
   server.registerTool("explain_filing", {
-    title: "Explain a Filing", description: "Which shelf a memory is on and the exact rule that put it there. Read-only.",
+    title: "Explain a Filing", description: "Which shelf a memory is on, the rule that decided it, and EVERY rule that matched (matched_rules). Read-only.",
     inputSchema: { message_id: z.number().int().min(1) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (p: { message_id: number }) => run("call", (q) => new TenantLibrarian(q, tenant.id).explain(p.message_id) as Promise<Record<string, unknown>>));
 
   server.registerTool("move_memory", {
     title: "Move a Memory", description: "Move a memory to another shelf; the Librarian may learn a trigger from it. Requires memory.write.",
-    inputSchema: { message_id: z.number().int().min(1), to_category: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9/_-]*$/i), source: z.string().min(1).max(40) },
+    inputSchema: { message_id: z.number().int().min(1), to_category: z.string().min(1).max(80).regex(/^[a-z0-9][a-z0-9/_-]*$/i), source: z.string().min(1).max(40), confirm_new_category: z.boolean().optional().describe("Set true ONLY to create a brand-new shelf; otherwise an unknown shelf name is refused (typo guard).") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async (p: { message_id: number; to_category: string; source: string }) => {
+  }, async (p: { message_id: number; to_category: string; source: string; confirm_new_category?: boolean }) => {
     if (!canWrite) return needWrite("move_memory");
-    return run("call", (q) => new TenantLibrarian(q, tenant.id).move(p.message_id, p.to_category.toLowerCase(), p.source) as Promise<Record<string, unknown>>);
+    return run("call", (q) => new TenantLibrarian(q, tenant.id).move(p.message_id, p.to_category.toLowerCase(), p.source, { confirmNewCategory: p.confirm_new_category }) as Promise<Record<string, unknown>>);
   });
 
   server.registerTool("add_rule", {
     title: "Add a Filing Rule", description: 'Plain-word rule, e.g. "anything mentioning invoices goes in finance". Requires memory.write.',
-    inputSchema: { rule: z.string().min(5).max(300), source: z.string().min(1).max(40) },
+    inputSchema: { rule: z.string().min(5).max(300), source: z.string().min(1).max(40), confirm_new_category: z.boolean().optional().describe("Set true ONLY to create a brand-new shelf; otherwise an unknown shelf name is refused (typo guard).") },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-  }, async (p: { rule: string; source: string }) => {
+  }, async (p: { rule: string; source: string; confirm_new_category?: boolean }) => {
     if (!canWrite) return needWrite("add_rule");
-    return run("call", (q) => new TenantLibrarian(q, tenant.id).addRule(p.rule, p.source) as Promise<Record<string, unknown>>);
+    return run("call", (q) => new TenantLibrarian(q, tenant.id).addRule(p.rule, p.source, { confirmNewCategory: p.confirm_new_category }) as Promise<Record<string, unknown>>);
   });
 
   server.registerTool("report_flag", {
