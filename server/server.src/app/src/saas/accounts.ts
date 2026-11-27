@@ -18,6 +18,12 @@ export interface Tenant {
 }
 export interface Membership { tenant: Tenant; role: string; }
 
+export const GUEST_EMAIL_DOMAIN = "try.scribemem.invalid";
+export function isGuestEmail(email: string): boolean {
+  return email.toLowerCase().endsWith("@" + GUEST_EMAIL_DOMAIN);
+}
+
+
 const EMAIL_RE = /^[^\s@<>()",;:]{1,64}@[A-Za-z0-9.-]{1,253}\.[A-Za-z]{2,24}$/;
 
 export function normalizeEmail(raw: string): string | null {
@@ -98,6 +104,18 @@ export class Accounts {
     await this.db.tenant(id, (q) => q.query(
       "INSERT INTO librarian_settings (tenant_id, rulebook, chosen_by) VALUES ($1,$2,$3)", [id, book, owner.email]));
     return (await this.tenantById(id))!;
+  }
+
+  /** No-signup try path: a fresh isolated tenant and a session, no email. */
+  async createGuest(): Promise<{ sessionToken: string; user: User; tenant: Tenant }> {
+    const user: User = { id: newId(), email: `guest-${newId()}@${GUEST_EMAIL_DOMAIN}` };
+    await this.db.control.query("INSERT INTO users (id, email) VALUES ($1,$2)", [user.id, user.email]);
+    const tenant = await this.createTenant(user, "My memory");
+    const sessionToken = randomToken(32);
+    await this.db.control.query(
+      "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1,$2, now() + make_interval(days => $3))",
+      [sha256(sessionToken), user.id, this.cfg.sessionTtlDays]);
+    return { sessionToken, user, tenant };
   }
 
   async userForSession(sessionToken: string | undefined): Promise<User | null> {

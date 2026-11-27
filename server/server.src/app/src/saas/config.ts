@@ -7,7 +7,7 @@ export interface SaasConfig {
   port: number;
   databaseUrl: string;
   databaseSsl: boolean;
-  mail: { provider: "resend" | "dev"; from: string | null; outboxFile: string };
+  mail: { provider: "resend" | "dev" | "off"; from: string | null; outboxFile: string };
   /** Which provider checkout, the billing portal and seat changes go through. Both webhooks stay mounted; each answers 503 until its secret is set. */
   paymentProvider: "stripe" | "paddle";
   paddle: {
@@ -33,7 +33,12 @@ export function loadSaasConfig(over: Partial<SaasConfig> = {}): SaasConfig {
   const publicUrl = (over.publicUrl ?? env("PUBLIC_URL") ?? "http://localhost:8080").replace(/\/+$/, "");
   const resendKey = env("RESEND_API_KEY");
   const from = env("MAIL_FROM");
-  const provider = (env("MAIL_PROVIDER") as "resend" | "dev" | null) ?? (resendKey && from ? "resend" : "dev");
+  const explicit = env("MAIL_PROVIDER");
+  const production = process.env.NODE_ENV === "production" || process.env.DEPLOY_ENV === "production" || env("SIGNIN_EMAIL") === "off";
+  let provider: "resend" | "dev" | "off";
+  if (explicit === "resend" || explicit === "dev" || explicit === "off") provider = explicit;
+  else if (resendKey && from) provider = "resend";
+  else provider = production ? "off" : "dev";
   let limitsOverride = {};
   try { limitsOverride = JSON.parse(env("PLAN_LIMITS_JSON") || "{}"); } catch { /* ignore */ }
   return {

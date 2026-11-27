@@ -27,7 +27,7 @@ import { MAILBOXES, canonicalMailbox } from "../courier/mailboxes.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
-import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS } from "./pages.js";
+import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS, tryPage, tryReadyPage, installCommands } from "./pages.js";
 
 const COOKIE = "smm_session";
 
@@ -125,11 +125,41 @@ export function createSaasApp(deps: SaasDeps) {
   };
 
   // ---------------------------------------------------------------- public pages + sign-in
-  app.get("/", (_req, res) => res.json({ name: "helmian-scribe", product: "Helmian Scribe", mode: "saas", status: "ok", sign_in: `${cfg.publicUrl}/login` }));
+  app.get("/", (_req, res) => res.json({ name: "scribe-memory", product: "Scribe Memory", mode: "saas", status: "ok", try: `${cfg.publicUrl}/try`, sign_in: `${cfg.publicUrl}/login` }));
   app.get("/healthz", (_req, res) => res.status(200).send("ok"));
-  app.get("/login", (req, res) => html(res, 200, signInPage({ returnTo: safeReturnTo(req.query.return_to) })));
+  app.get("/try", (_req, res) => html(res, 200, tryPage()));
+  app.post("/try", limiter(10, 60 * 60 * 1000), express.urlencoded({ extended: false }), express.json(), wrap(async (req, res) => {
+    if (!sameOrigin(req)) { res.status(403).json({ error: "Bad origin." }); return; }
+    const guest = await accounts.createGuest();
+    const mcpUrl = mcpUrlFor(guest.tenant);
+    const tokens = await oauth.mintFirstParty(guest.tenant.id, guest.user.id, mcpUrl);
+    setSession(res, guest.sessionToken);
+    const install = installCommands(mcpUrl, tokens.access_token);
+    const wantsJson = (req.header("accept") || "").includes("json") || (req.header("content-type") || "").includes("json");
+    if (wantsJson) {
+      res.status(201).json({
+        mcp_url: mcpUrl,
+        access_token: tokens.access_token,
+        refresh_token: tokens.refresh_token,
+        expires_in: tokens.expires_in,
+        token_type: "Bearer",
+        dashboard: `${cfg.publicUrl}/dashboard`,
+        install,
+      });
+      return;
+    }
+    html(res, 201, tryReadyPage({ mcpUrl, token: tokens.access_token!, expiresIn: tokens.expires_in ?? 0, install }));
+  }));
+  app.get("/login", (req, res) => html(res, 200, signInPage({ returnTo: safeReturnTo(req.query.return_to), emailSignIn: cfg.mail.provider !== "off" })));
   app.post("/auth/start", limiter(20, 60 * 60 * 1000), express.urlencoded({ extended: false }), express.json(), wrap(async (req, res) => {
     if (!sameOrigin(req)) { res.status(403).json({ error: "Bad origin." }); return; }
+    if (cfg.mail.provider === "off") {
+      const msg = "Email sign-in is not enabled yet. Try without an account at /try.";
+      const wantsJson = (req.header("content-type") || "").includes("json") || (req.header("accept") || "").includes("json");
+      if (wantsJson) { res.status(503).json({ error: msg, try: "/try" }); return; }
+      html(res, 503, signInPage({ returnTo: safeReturnTo(req.body?.return_to), error: msg, emailSignIn: false }));
+      return;
+    }
     const email = String(req.body?.email || "");
     const returnTo = safeReturnTo(req.body?.return_to);
     const r = await accounts.startMagicLink(email, returnTo);

@@ -88,7 +88,7 @@ export function assessConfig(cfg: SaasConfig, production: boolean): ConfigAssess
   // --- Sign-in email: the dev mailer sends NOTHING (magic links go to a file).
   if (cfg.mail.provider === "dev") {
     if (production) {
-      problems.push("Mail provider resolved to 'dev': magic-link sign-in email would never be sent (links are appended to an outbox file instead). Set RESEND_API_KEY and MAIL_FROM (verified Resend sending domain) — see docs/HOSTING.md.");
+      problems.push("Mail provider resolved to 'dev': magic-link sign-in email would never be sent (links are appended to an outbox file instead). Set RESEND_API_KEY and MAIL_FROM (verified Resend sending domain), or set MAIL_PROVIDER=off to run with the no-signup try path only — see docs/HOSTING.md.");
     } else {
       warnings.push(
         "\n====================================================================\n" +
@@ -97,6 +97,8 @@ export function assessConfig(cfg: SaasConfig, production: boolean): ConfigAssess
         "  Fine for local/staging. NEVER run production this way.\n" +
         "====================================================================");
     }
+  } else if (cfg.mail.provider === "off") {
+    warnings.push("Email sign-in is off (no Resend key). The no-signup try path at /try is the way in. Set RESEND_API_KEY and MAIL_FROM to turn email sign-in on.");
   }
 
   // --- Payment provider: PAYMENT_PROVIDER picks one; a typo must not silently fall back to Stripe.

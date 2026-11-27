@@ -71,8 +71,11 @@ server **refuses to boot** when:
 
 - `PUBLIC_URL` is unset (it would silently default to `http://localhost:8080`),
   points at a loopback host, or is not `https://`;
-- the mailer resolves to `dev` (no `RESEND_API_KEY` + `MAIL_FROM`) — magic-link
-  sign-in email would never be sent;
+- the mailer resolves to `dev` (magic links go to a file and are never emailed).
+  Production may boot with `MAIL_PROVIDER=off` (or with no Resend key): email
+  sign-in is disabled and the no-signup try path at `/try` is the way in.
+  Set `RESEND_API_KEY` and `MAIL_FROM` to turn email sign-in on. A `dev` mailer
+  in production still refuses to boot, so links cannot silently disappear;
 - Stripe is **half**-configured (a secret key without webhook secret or price
   ids), or a live key is presented without `STRIPE_ALLOW_LIVE=yes-i-mean-live`;
 - the database is unprovisioned or **drifted** (the `schema_migrations` ledger
