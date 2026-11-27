@@ -109,6 +109,8 @@ ones:
 | `MEMORY_APP_PASSWORD` | Must match the password inside `DATABASE_URL` (used when provisioning creates the role) |
 | `PROVISION_ON_BOOT` | `apply` or `check-only` (default) — see the entrypoint table |
 | `RESEND_API_KEY`, `MAIL_FROM` | Real sign-in email; both required in production |
+| `PAYMENT_PROVIDER` | `stripe` (default) or `paddle`; a mistyped value refuses to boot |
+| `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`, `PADDLE_PRICE_PERSONAL`, `PADDLE_PRICE_PERSONAL_YEARLY`, `PADDLE_PRICE_TEAM` | Paddle billing; all-or-nothing, sandbox until the live decision. See [PADDLE-GO-LIVE.md](PADDLE-GO-LIVE.md) |
 | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PERSONAL`, `STRIPE_PRICE_PERSONAL_YEARLY`, `STRIPE_PRICE_TEAM` | Billing; all-or-nothing. Test keys until the separate live-billing decision |
 | `MIGRATIONS_DIR` | Set by the image (`/migrations`); override only outside the image |
 

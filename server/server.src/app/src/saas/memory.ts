@@ -16,22 +16,38 @@ export const ENGINE_VERSION = "librarian-0.3.0+saas";
 const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : String(d));
 
 // ------------------------------------------------------------------ usage + limits
+/** The UTC calendar day, as the database sees it. Every usage_daily read and write uses this one expression. */
+const UTC_DAY = "(now() AT TIME ZONE 'UTC')::date";
+
+/** Seconds until the next UTC midnight (the daily cap resets then). */
+export function secondsToUtcMidnight(now = new Date()): number {
+  return Math.max(1, Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now.getTime()) / 1000));
+}
+
 /**
- * Meters a call in usage_daily. There is no per-day call cap on any plan: the numbers are kept for the dashboard and
- * for abuse review. Plan limits are memories, stored bytes and typed rules (see saveMemory and TenantLibrarian.addRule).
+ * Meters a call in usage_daily and enforces the plan's daily call cap. The counter lives in the database, so the cap holds
+ * across restarts and replicas. The increment is one statement: the row is only updated while it is under the cap, and a
+ * refused call is not counted. Two concurrent calls cannot both take the last slot (the upsert takes the row lock).
+ * `plan` is omitted only by callers that must meter without limiting.
  */
-export async function countCall(q: Q, tenantId: string, kind: "call" | "save" = "call"): Promise<number> {
+export async function countCall(q: Q, tenantId: string, kind: "call" | "save" = "call", plan?: Plan): Promise<number> {
+  const cap = plan ? plan.maxCallsPerDay : null;
   const r = await q.query(
-    `INSERT INTO usage_daily (tenant_id, day, calls, saves) VALUES ($1, CURRENT_DATE, 1, $2)
+    `INSERT INTO usage_daily (tenant_id, day, calls, saves) VALUES ($1, ${UTC_DAY}, 1, $2)
      ON CONFLICT (tenant_id, day) DO UPDATE SET calls = usage_daily.calls + 1, saves = usage_daily.saves + EXCLUDED.saves
-     RETURNING calls`, [tenantId, kind === "save" ? 1 : 0]);
+       WHERE $3::int IS NULL OR usage_daily.calls < $3::int
+     RETURNING calls`, [tenantId, kind === "save" ? 1 : 0, cap]);
+  if (!r.rows.length) {
+    const upgrade = plan!.id === "free" ? " Upgrade to Personal for a higher limit." : "";
+    throw new LimitError(`Daily limit reached: the ${plan!.name} plan allows ${cap!.toLocaleString("en-US")} calls a day. It resets at midnight UTC.${upgrade} Nothing was lost; try again after the reset.`, "calls");
+  }
   return Number(r.rows[0].calls);
 }
 
 export async function usage(q: Q, tenantId: string): Promise<{ memories: number; bytes: number; calls_today: number; saves_today: number }> {
   const m = await q.query("SELECT count(*)::int AS n FROM messages WHERE tenant_id = $1", [tenantId]);
   const b = await q.query("SELECT bytes FROM tenant_storage WHERE tenant_id = $1", [tenantId]);
-  const u = await q.query("SELECT calls, saves FROM usage_daily WHERE tenant_id = $1 AND day = CURRENT_DATE", [tenantId]);
+  const u = await q.query(`SELECT calls, saves FROM usage_daily WHERE tenant_id = $1 AND day = ${UTC_DAY}`, [tenantId]);
   return { memories: m.rows[0].n, bytes: Number(b.rows[0]?.bytes ?? 0), calls_today: u.rows[0]?.calls ?? 0, saves_today: u.rows[0]?.saves ?? 0 };
 }
 

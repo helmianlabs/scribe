@@ -15,7 +15,25 @@ import Stripe from "stripe";
 import type { Db } from "./db.js";
 import type { SaasConfig } from "./config.js";
 import type { Accounts, Tenant } from "./accounts.js";
-import { isPaidStatus, type PlanId } from "./plans.js";
+import { isPaidStatus, TEAM_MAX_SEATS, type PlanId } from "./plans.js";
+
+/** What app.ts needs from a payment provider (Stripe or Paddle). */
+export interface BillingProvider {
+  readonly name: "stripe" | "paddle";
+  readonly mode: "test" | "live" | "mock";
+  checkout(tenant: Tenant, plan: PlanId, email: string, interval?: "month" | "year", seats?: number): Promise<{ url: string; mode: string; id?: string }>;
+  portal(tenant: Tenant): Promise<{ url: string; mode: string }>;
+  /** Change the seat count on an existing Team subscription. */
+  setSeats(tenant: Tenant, seats: number): Promise<{ requested: number; mode: string }>;
+}
+
+/** Validate a seat count from a request. Team only; Free and Personal are one seat. */
+export function parseSeats(plan: PlanId, v: unknown): number {
+  if (plan !== "team") return 1;
+  const n = v === undefined || v === null || v === "" ? 1 : Number(v);
+  if (!Number.isInteger(n) || n < 1 || n > TEAM_MAX_SEATS) throw new BillingError(`Choose between 1 and ${TEAM_MAX_SEATS} seats.`);
+  return n;
+}
 
 /** Stripe metadata written before the plan rename says "pro"; it means Personal. Anything unknown is no paid plan. */
 function paidPlanFromMetadata(v: unknown): PlanId | null {
@@ -31,7 +49,8 @@ export function assertTestKey(key: string, allowLive: boolean): void {
   }
 }
 
-export class Billing {
+export class Billing implements BillingProvider {
+  readonly name = "stripe" as const;
   readonly stripe: Stripe | null;
   readonly mode: "test" | "live" | "mock";
 
@@ -60,13 +79,14 @@ export class Billing {
     return null;
   }
 
-  async checkout(tenant: Tenant, plan: PlanId, email: string, interval: "month" | "year" = "month"): Promise<{ url: string; mode: string; id?: string }> {
+  async checkout(tenant: Tenant, plan: PlanId, email: string, interval: "month" | "year" = "month", seats = 1): Promise<{ url: string; mode: string; id?: string }> {
     if (plan !== "personal" && plan !== "team") throw new BillingError("Choose the personal or team plan.");
     if (interval !== "month" && interval !== "year") throw new BillingError("Choose monthly or yearly billing.");
     if (plan === "team" && interval === "year") throw new BillingError("Team is billed monthly.");
+    seats = parseSeats(plan, seats);
     const base = this.cfg.publicUrl;
     if (!this.stripe) {
-      return { url: `${base}/billing/mock?plan=${plan}&interval=${interval}&tenant=${encodeURIComponent(tenant.slug)}`, mode: "mock" };
+      return { url: `${base}/billing/mock?plan=${plan}&interval=${interval}&seats=${seats}&tenant=${encodeURIComponent(tenant.slug)}`, mode: "mock" };
     }
     const price = this.priceFor(plan, interval);
     if (!price) throw new BillingError(`No Stripe price configured for ${plan} ${interval === "year" ? "yearly" : "monthly"} (set ${plan === "personal" ? (interval === "year" ? "STRIPE_PRICE_PERSONAL_YEARLY" : "STRIPE_PRICE_PERSONAL") : "STRIPE_PRICE_TEAM"}).`, 500);
@@ -80,9 +100,9 @@ export class Billing {
       mode: "subscription",
       customer,
       client_reference_id: tenant.id,
-      line_items: [{ price, quantity: 1 }],
-      metadata: { tenant_id: tenant.id, plan, interval },
-      subscription_data: { metadata: { tenant_id: tenant.id, plan } },
+      line_items: [{ price, quantity: plan === "team" ? seats : 1, ...(plan === "team" ? { adjustable_quantity: { enabled: true, minimum: 1, maximum: TEAM_MAX_SEATS } } : {}) }],
+      metadata: { tenant_id: tenant.id, plan, interval, seats: String(seats) },
+      subscription_data: { metadata: { tenant_id: tenant.id, plan, seats: String(seats) } },
       allow_promotion_codes: true,
       success_url: `${base}/dashboard?billing=success`,
       cancel_url: `${base}/dashboard?billing=cancelled`,
@@ -95,6 +115,19 @@ export class Billing {
     if (!tenant.stripe_customer_id) throw new BillingError("No billing account yet. Upgrade first.");
     const s = await this.stripe.billingPortal.sessions.create({ customer: tenant.stripe_customer_id, return_url: `${this.cfg.publicUrl}/dashboard` });
     return { url: s.url, mode: this.mode };
+  }
+
+  /** Change the seat quantity on the tenant's Team subscription. The webhook then records it (customer.subscription.updated). */
+  async setSeats(tenant: Tenant, seats: number): Promise<{ requested: number; mode: string }> {
+    seats = parseSeats("team", seats);
+    if (tenant.plan !== "team") throw new BillingError("Seats apply to the Team plan.");
+    if (!this.stripe) return { requested: seats, mode: "mock" };
+    if (!tenant.stripe_subscription_id) throw new BillingError("No subscription to change.");
+    const sub = await this.stripe.subscriptions.retrieve(tenant.stripe_subscription_id);
+    const item = sub.items.data[0];
+    if (!item) throw new BillingError("The subscription has no items.", 500);
+    await this.stripe.subscriptions.update(sub.id, { items: [{ id: item.id, quantity: seats }], proration_behavior: "create_prorations" });
+    return { requested: seats, mode: this.mode };
   }
 
   /** Verify + apply a webhook. Returns a short status for the response body. */
@@ -153,11 +186,12 @@ export class Billing {
     return cust ? this.accounts.tenantByCustomer(cust) : null;
   }
 
-  private async setPlan(tenantId: string, plan: PlanId, status: string, customer?: string | null, subscription?: string | null) {
+  private async setPlan(tenantId: string, plan: PlanId, status: string, customer?: string | null, subscription?: string | null, seats = 1) {
     await this.db.control.query(
       `UPDATE tenants SET plan = $2, plan_status = $3, stripe_customer_id = COALESCE($4, stripe_customer_id),
-              stripe_subscription_id = COALESCE($5, stripe_subscription_id), updated_at = now() WHERE id = $1`,
-      [tenantId, plan, status, customer ?? null, subscription ?? null]);
+              stripe_subscription_id = COALESCE($5, stripe_subscription_id), seats = $6,
+              payment_provider = CASE WHEN $2 = 'free' THEN payment_provider ELSE 'stripe' END, updated_at = now() WHERE id = $1`,
+      [tenantId, plan, status, customer ?? null, subscription ?? null, plan === "team" ? Math.min(TEAM_MAX_SEATS, Math.max(1, Math.floor(seats) || 1)) : 1]);
   }
 
   private async applyEvent(event: Stripe.Event): Promise<string | null> {
@@ -186,7 +220,7 @@ export class Billing {
         }
         const sub = typeof s.subscription === "string" ? s.subscription : s.subscription?.id;
         const cust = typeof s.customer === "string" ? s.customer : s.customer?.id;
-        await this.setPlan(t.id, plan, "active", cust, sub);
+        await this.setPlan(t.id, plan, "active", cust, sub, Number(s.metadata?.seats) || 1);
         return t.id;
       }
       case "customer.subscription.created":
@@ -197,7 +231,7 @@ export class Billing {
         const price = sub.items?.data?.[0]?.price?.id;
         const plan = this.planForPrice(price) ?? paidPlanFromMetadata(sub.metadata?.plan);
         const effective: PlanId = isPaidStatus(sub.status) && plan ? plan : "free";
-        await this.setPlan(t.id, effective, sub.status, typeof sub.customer === "string" ? sub.customer : sub.customer.id, sub.id);
+        await this.setPlan(t.id, effective, sub.status, typeof sub.customer === "string" ? sub.customer : sub.customer.id, sub.id, sub.items?.data?.[0]?.quantity ?? 1);
         return t.id;
       }
       case "customer.subscription.deleted": {

@@ -32,6 +32,7 @@ export const MIGRATION_FILES = [
   "006_courier.sql",
   "007_stripe_events_status.sql",
   "009_plans_personal.sql",
+  "010_paddle_seats.sql",
 ];
 // Tables 005/006 put under FORCE row-level security with a tenant_isolation policy.
 const RLS_TABLES = [
@@ -95,9 +96,39 @@ export function assessConfig(cfg: SaasConfig, production: boolean): ConfigAssess
     }
   }
 
+  // --- Payment provider: PAYMENT_PROVIDER picks one; a typo must not silently fall back to Stripe.
+  const rawProvider = process.env.PAYMENT_PROVIDER?.trim();
+  if (rawProvider && rawProvider !== "stripe" && rawProvider !== "paddle") {
+    problems.push(`PAYMENT_PROVIDER is "${rawProvider}"; it must be "stripe" or "paddle" (or unset, which means stripe).`);
+  }
+
+  // --- Paddle: fully configured or fully off — never half. Only checked when it is the selected provider or a key is set.
+  const pd = cfg.paddle;
+  if (cfg.paymentProvider === "paddle" || pd.apiKey) {
+    if (pd.apiKey) {
+      const missing: string[] = [];
+      if (!pd.webhookSecret) missing.push("PADDLE_WEBHOOK_SECRET");
+      if (!pd.clientToken) missing.push("PADDLE_CLIENT_TOKEN");
+      if (!pd.prices.personal) missing.push("PADDLE_PRICE_PERSONAL");
+      if (!pd.prices.personalYearly) missing.push("PADDLE_PRICE_PERSONAL_YEARLY");
+      if (!pd.prices.team) missing.push("PADDLE_PRICE_TEAM");
+      if (missing.length) problems.push(`Paddle is half-configured: PADDLE_API_KEY is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Either complete the billing configuration or unset PADDLE_API_KEY to run with billing off.`);
+      const sandboxKey = pd.apiKey.includes("_sdbx");
+      if (!sandboxKey && !pd.allowLive) problems.push("PADDLE_API_KEY is a LIVE key but PADDLE_ALLOW_LIVE is not set to 'yes-i-mean-live'. Live billing is a deliberate, separate decision — refusing to boot.");
+      if (pd.clientToken) {
+        if (sandboxKey && !pd.clientToken.startsWith("test_")) problems.push("PADDLE_API_KEY is a sandbox key but PADDLE_CLIENT_TOKEN is not a sandbox token (sandbox tokens start with test_). Sandbox and live credentials cannot be mixed.");
+        if (!sandboxKey && !pd.clientToken.startsWith("live_")) problems.push("PADDLE_API_KEY is a live key but PADDLE_CLIENT_TOKEN is not a live token (live tokens start with live_). Sandbox and live credentials cannot be mixed.");
+      }
+    } else {
+      warnings.push("PAYMENT_PROVIDER is paddle but PADDLE_API_KEY is not set — billing runs in mock mode (checkout disabled, plans display-only).");
+    }
+  }
+
   // --- Stripe: fully configured or fully off — never half.
   const s = cfg.stripe;
-  if (s.secretKey) {
+  if (cfg.paymentProvider === "paddle" && !s.secretKey) {
+    // Paddle is the provider; Stripe is intentionally off. No Stripe warning.
+  } else if (s.secretKey) {
     const missing: string[] = [];
     if (!s.webhookSecret) missing.push("STRIPE_WEBHOOK_SECRET");
     if (!s.prices.personal) missing.push("STRIPE_PRICE_PERSONAL");

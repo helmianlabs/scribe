@@ -69,8 +69,38 @@ export function gettingStartedPage(): string {
 }
 
 export function mockBillingPage(): string {
-  return layout("Helmian Scribe billing (test stub)", `<div class="card"><h1>Billing is not connected yet</h1><p class="sub">This server has no Stripe key, so checkout is a stub. Nothing was charged. Set STRIPE_SECRET_KEY (a test key, sk_test_…) to use Stripe test-mode checkout.</p><p><a href="/dashboard" style="color:#93c5fd">Back to dashboard</a></p></div>`);
+  return layout("Helmian Scribe billing (test stub)", `<div class="card"><h1>Billing is not connected yet</h1><p class="sub">This server has no payment provider key, so checkout is a stub. Nothing was charged. Set PAYMENT_PROVIDER and the matching test or sandbox key (Stripe sk_test_…, or a Paddle sandbox key) to try checkout.</p><p><a href="/dashboard" style="color:#93c5fd">Back to dashboard</a></p></div>`);
 }
+
+/** Where Paddle's checkout payment links point (Paddle Billing has no hosted checkout: it opens on a page you serve that includes Paddle.js). */
+export function paddlePayPage(opts: { token: string; environment: "sandbox" | "production" }): string {
+  return layout("Helmian Scribe checkout", `<div class="card" id="pay" data-token="${esc(opts.token)}" data-env="${esc(opts.environment)}"><h1>Opening checkout…</h1><p class="sub" id="paystatus">If nothing opens, allow pop-ups and frames from paddle.com, then reload this page.</p><p><a href="/dashboard" style="color:#93c5fd">Back to dashboard</a></p></div>`,
+    ["https://cdn.paddle.com/paddle/v2/paddle.js", "/static/paddle-pay.js"]);
+}
+
+/**
+ * Content-Security-Policy for /billing/pay only. Paddle.js and the checkout it opens load from paddle.com hosts. Paddle's
+ * documentation index has no CSP list that could be retrieved, so the whole paddle.com family is allowed here and nowhere
+ * else. NOT VERIFIED against a live sandbox checkout: if the browser console shows a CSP violation, widen it here.
+ */
+export const PADDLE_PAY_CSP = "default-src 'none'; script-src 'self' https://cdn.paddle.com https://*.paddle.com; style-src 'unsafe-inline' https://*.paddle.com; connect-src 'self' https://*.paddle.com; frame-src https://*.paddle.com; img-src 'self' data: https://*.paddle.com; font-src https://*.paddle.com; form-action 'self'; frame-ancestors 'none'; base-uri 'none'";
+
+export const PADDLE_PAY_JS = `(() => {
+const el = document.getElementById('pay');
+const status = document.getElementById('paystatus');
+if (!el || !window.Paddle) { if (status) status.textContent = 'Checkout could not load. Reload the page or try again later.'; return; }
+if (el.dataset.env === 'sandbox') window.Paddle.Environment.set('sandbox');
+let done = false;
+window.Paddle.Initialize({
+  token: el.dataset.token,
+  checkout: { settings: { displayMode: 'overlay', theme: 'dark', successUrl: location.origin + '/dashboard?billing=success' } },
+  eventCallback: (e) => {
+    if (!e) return;
+    if (e.name === 'checkout.completed') done = true;
+    if (e.name === 'checkout.closed') location.href = '/dashboard?billing=' + (done ? 'success' : 'cancelled');
+  },
+});
+})();`;
 
 export const DASHBOARD_JS = `(() => {
 const $ = (h) => { const d = document.createElement('div'); d.innerHTML = h; return d.firstElementChild; };
@@ -89,7 +119,10 @@ async function load() {
     '<p class="muted">The AI app will open a page here asking you to approve. That is the only step.</p></div>'));
   app.append($('<div class="card"><h2>Plan: ' + esc(p.name) + (t.plan_status !== 'active' ? ' (' + esc(t.plan_status) + ')' : '') + '</h2>' +
     '<p>' + u.memories.toLocaleString() + (p.maxMemories === null ? ' memories (no limit)' : ' of ' + p.maxMemories.toLocaleString() + ' memories') + ' · ' + mb(u.bytes) + ' of ' + mb(p.maxBytes) + ' stored</p>' +
-    (me.tenant.plan === 'free' ? '<button data-plan="personal" data-interval="month">Personal $' + me.plans.personal.priceUsdMonthly + '/month</button><button data-plan="personal" data-interval="year">Personal $' + me.plans.personal.priceUsdYearly + '/year</button>' : '') +
+    '<p>' + u.calls_today.toLocaleString() + ' of ' + p.maxCallsPerDay.toLocaleString() + ' calls today (resets at midnight UTC)</p>' +
+    (me.tenant.plan === 'free' ? '<button data-plan="personal" data-interval="month">Personal $' + me.plans.personal.priceUsdMonthly + '/month</button><button data-plan="personal" data-interval="year">Personal $' + me.plans.personal.priceUsdYearly + '/year</button>' +
+      '<p style="margin-top:14px">Team, $' + me.plans.team.priceUsdMonthly + ' per seat per month: <input id="seats" type="number" min="1" max="' + me.max_seats + '" value="2" style="width:80px;display:inline-block"> seats <button data-plan="team" data-interval="month">Choose Team</button></p>' : '') +
+    (me.tenant.plan === 'team' ? '<p>' + t.seats + ' seat' + (t.seats === 1 ? '' : 's') + ' <input id="newseats" type="number" min="1" max="' + me.max_seats + '" value="' + t.seats + '" style="width:80px;display:inline-block"> <button class="ghost" id="setseats">Change seats</button></p>' : '') +
     '<button class="ghost" id="portal">Manage billing</button>' +
     '<p class="muted">Billing mode: ' + esc(me.billing_mode) + '</p></div>'));
   app.append($('<div class="card"><h2>Flags</h2>' + (flags.length ? '<table><tr><th>When</th><th>Severity</th><th>What</th><th>From</th></tr>' + flags.map((f) => '<tr><td>' + esc(new Date(f.created_at).toLocaleString()) + '</td><td class="sev-' + esc(f.severity) + '">' + esc(f.severity) + '</td><td>' + esc(f.reason) + (f.excerpt ? '<br><span class="mono">' + esc(f.excerpt.slice(0, 160)) + '</span>' : '') + '</td><td>' + esc(f.source_ai || '') + '</td></tr>').join('') + '</table>' : '<p class="muted">No flags yet. Secrets and personal numbers are redacted before anything is stored.</p>') +
@@ -97,7 +130,8 @@ async function load() {
   app.append($('<div class="card"><h2>API keys (for Helmian Guard and other services)</h2>' + (keys.length ? '<table>' + keys.map((k) => '<tr><td>' + esc(k.name) + '</td><td class="mono">' + esc(k.prefix) + '…</td><td>' + (k.revoked_at ? 'revoked' : '<button class="ghost" data-revoke="' + esc(k.id) + '">Revoke</button>') + '</td></tr>').join('') + '</table>' : '<p class="muted">None yet.</p>') + '<input id="kn" placeholder="Key name, e.g. Guard extension"><button id="newkey">Create key</button><p id="keyout"></p></div>'));
   app.append($('<div class="card"><h2>Bring your old chats with you</h2><p>Export your history from Claude or ChatGPT and upload the .zip here — your old conversations land in this memory, titled and dated, searchable by every AI you connect. Uploading the same file twice is safe: nothing is duplicated.</p><p><a href="/getting-started" style="color:#93c5fd">Step-by-step guide: how to export from Claude or ChatGPT</a></p><input type="file" id="impfile" accept=".zip"><button id="impgo">Import history</button><p id="impout"></p></div>'));
   app.append($('<div class="card"><h2>Your data</h2><button class="ghost" id="export">Export everything (JSON)</button><button class="danger" id="delall">Delete all memories</button><p class="muted">Delete removes every memory, filing and flag. Your account and billing stay.</p></div>'));
-  app.querySelectorAll('[data-plan]').forEach((b) => b.onclick = async () => { try { const r = await api('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ plan: b.dataset.plan, interval: b.dataset.interval || 'month' }) }); location.href = r.url; } catch (e) { alert(e.message); } });
+  app.querySelectorAll('[data-plan]').forEach((b) => b.onclick = async () => { try { const r = await api('/api/billing/checkout', { method: 'POST', body: JSON.stringify({ plan: b.dataset.plan, interval: b.dataset.interval || 'month', seats: b.dataset.plan === 'team' ? Number(document.getElementById('seats').value) : undefined }) }); location.href = r.url; } catch (e) { alert(e.message); } });
+  const ss = document.getElementById('setseats'); if (ss) ss.onclick = async () => { try { const r = await api('/api/billing/seats', { method: 'POST', body: JSON.stringify({ seats: Number(document.getElementById('newseats').value) }) }); alert('Requested ' + r.requested + ' seats. It shows here once the payment provider confirms.'); } catch (e) { alert(e.message); } };
   document.getElementById('portal').onclick = async () => { try { location.href = (await api('/api/billing/portal', { method: 'POST' })).url; } catch (e) { alert(e.message); } };
   document.getElementById('savealerts').onclick = async () => { try { await api('/api/alerts', { method: 'POST', body: JSON.stringify({ alert_email: document.getElementById('ae').value || null, alert_webhook_url: document.getElementById('aw').value || null, alert_min_severity: document.getElementById('as').value }) }); load(); } catch (e) { alert(e.message); } };
   document.getElementById('newkey').onclick = async () => { try { const r = await api('/api/keys', { method: 'POST', body: JSON.stringify({ name: document.getElementById('kn').value }) }); document.getElementById('keyout').innerHTML = 'Copy it now, it will not be shown again:<br><code>' + esc(r.key) + '</code>'; } catch (e) { alert(e.message); } };

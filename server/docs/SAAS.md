@@ -46,15 +46,18 @@ Nothing on this branch has been deployed or run against Sam's production databas
 | ChatGPT / Claude history import | no | yes | yes |
 | Daily backups | no | yes (entitlement flag; see note) | yes |
 | API keys | 1 | 5 | 25 (placeholder) |
-| Members | 1 | 1 | 10 (placeholder) |
+| Daily calls | 500 | 10,000 | 10,000 per seat |
+| Members | 1 | 1 | one per seat |
 
-Only the Team price was specified. Team's storage, API-key and member numbers are placeholders, and seats are not enforced (there is no invite flow yet). The hosted server does not build the knowledge graph yet and the repo has no backup job, so "graph" and "daily backups" are entitlements recorded on the plan, not running features.
+Only the Team price was specified. Team's storage and API-key numbers are placeholders. Team's seat count comes from the subscription quantity (migration 010) and sets its member allowance and daily call cap; there is no invite flow yet, so seats are an allowance, not assigned people. The hosted server does not build the knowledge graph yet and the repo has no backup job, so "graph" and "daily backups" are entitlements recorded on the plan, not running features.
 
-Limits are enforced in `saas/memory.ts` (memory count, stored bytes via the per-tenant `tenant_storage` counter from migration 009, typed rules, learning and shelves), `saas/apikeys.ts` and `saas/app.ts` (import). Hitting a limit returns a plain-language tool error (MCP) or HTTP 402 with `limit: memories|bytes|rules|api_keys|feature` (API); search, read and export keep working. There is no per-day call cap any more: calls are only metered per tenant per UTC day in `usage_daily`. `PLAN_LIMITS_JSON` overrides `maxMemories`, `maxBytes` and `maxTypedRules` per plan per environment. The retired plan id `pro` reads as `personal`; migration 009 renames stored rows. The Stripe Price is the source of truth for money, `plans.ts` for limits.
+Limits are enforced in `saas/memory.ts` (memory count, stored bytes via the per-tenant `tenant_storage` counter from migration 009, typed rules, learning and shelves), `saas/apikeys.ts` and `saas/app.ts` (import). Hitting a limit returns a plain-language tool error (MCP) or HTTP 402 with `limit: memories|bytes|rules|api_keys|feature` (API); search, read and export keep working. Calls are also capped per tenant per UTC day, in the database (`usage_daily`, one guarded upsert, so the cap holds across restarts and replicas and a refused call is not counted): **Free 500, Personal 10,000, Team 10,000 per seat** (constants `CALLS_PER_DAY` in `saas/plans.ts`; these are chosen numbers, not part of the approved tiers). Every MCP tool call, flags-API call with an API key and history import counts; dashboard-session reads and export do not. At the cap, MCP gets a plain tool error and the API gets HTTP 429 with `Retry-After` and `limit: calls`. `PLAN_LIMITS_JSON` overrides `maxMemories`, `maxBytes` and `maxTypedRules` per plan per environment. The retired plan id `pro` reads as `personal`; migration 009 renames stored rows. The Stripe Price is the source of truth for money, `plans.ts` for limits.
 
 **Export and delete**
 - `GET /api/export` → one JSON file with every row of the tenant (memories, notebooks, filings, rules, flags, Courier messages, usage).
 - `POST /api/delete-all {"confirm":"DELETE"}` (owner only) → deletes memories, filings, moves, custom rules, flags and Courier messages. Keeps the account, billing, chosen rulebook and usage meter. Add `"revoke_connections": true` to also revoke every OAuth token.
+
+**Payment provider** (`PAYMENT_PROVIDER=stripe|paddle`, default stripe). Checkout, the billing portal and seat changes go through the selected provider; both webhook routes stay mounted and each answers 503 until its own secret is set. Paddle (`saas/paddle.ts`, sandbox by default, merchant of record) is described in [PADDLE-GO-LIVE.md](PADDLE-GO-LIVE.md), including the steps only the account owner can do. `POST /api/billing/seats {"seats":n}` changes a Team subscription's seat quantity; `POST /api/billing/checkout` takes `seats` for Team (1 to 100).
 
 **Stripe (test mode only)** (`saas/billing.ts`)
 - `POST /api/billing/checkout {"plan":"personal"|"team","interval":"month"|"year"}` (yearly is Personal only) → Checkout Session (subscription) with `tenant_id` in `client_reference_id` and metadata; creates the Stripe customer on first use.
@@ -78,8 +81,9 @@ Limits are enforced in `saas/memory.ts` (memory count, stored bytes via the per-
 | `006_courier.sql` | both modes | Helmian Courier tables; adds RLS when `tenants` exists |
 | `007_stripe_events_status.sql` | **SaaS database only** | `stripe_events` apply tracking (`apply_status`/`apply_error`/`applied_at`/`attempts`) so a webhook whose apply fails stays retryable instead of being swallowed as a duplicate |
 | `009_plans_personal.sql` | **SaaS database only** | plan id `pro` → `personal` (CHECK widened), `tenant_storage` byte counter with RLS (backfilled from existing messages), grants for `memory_app`. Down restores `pro` and drops the counter. (008 is the graph migration; it is not in the SaaS chain.) |
+| `010_paddle_seats.sql` | **SaaS database only** | `tenants.seats`, `payment_provider`, `paddle_customer_id`, `paddle_subscription_id`, `paddle_event_at`; `paddle_events` webhook ledger (same apply tracking as `stripe_events`). Additive. |
 
-Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009.
+Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009 → 010.
 
 Moving Sam's archive into the hosted service later = export from `claude_memory`, import as tenant `self` (or a new tenant). Not built yet.
 
@@ -103,7 +107,9 @@ On machines without Docker bridge networking add `-f staging/docker-compose.host
 | `PUBLIC_URL` | yes | https origin; issuer + resource URLs derive from it |
 | `DATABASE_SSL=disable` | local only | default is SSL on |
 | `RESEND_API_KEY`, `MAIL_FROM` | for real email | otherwise dev outbox |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PERSONAL`, `STRIPE_PRICE_PERSONAL_YEARLY`, `STRIPE_PRICE_TEAM` | for billing | test keys only |
+| `PAYMENT_PROVIDER` | optional | `stripe` (default) or `paddle` |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PERSONAL`, `STRIPE_PRICE_PERSONAL_YEARLY`, `STRIPE_PRICE_TEAM` | for Stripe billing | test keys only |
+| `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`, `PADDLE_PRICE_PERSONAL`, `PADDLE_PRICE_PERSONAL_YEARLY`, `PADDLE_PRICE_TEAM` | for Paddle billing | sandbox only until the live decision |
 | `ALERT_WEBHOOK_SECRET` | for alert webhooks | HMAC signing secret |
 | `OPENAI_API_KEY` | optional | turns on moderation (redacted text only) |
 | `PLAN_LIMITS_JSON`, `SESSION_TTL_DAYS`, `MAGIC_LINK_TTL_MIN`, `FLAGS_SAFE_INSTALL_HOSTS` | optional | tuning |

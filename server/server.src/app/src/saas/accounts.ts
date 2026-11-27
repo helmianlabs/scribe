@@ -12,6 +12,8 @@ export interface User { id: string; email: string; }
 export interface Tenant {
   id: string; slug: string; name: string; plan: string; plan_status: string;
   stripe_customer_id: string | null; stripe_subscription_id: string | null;
+  seats: number; payment_provider: string | null;
+  paddle_customer_id: string | null; paddle_subscription_id: string | null; paddle_event_at: Date | null;
   alert_email: string | null; alert_webhook_url: string | null; alert_min_severity: string;
 }
 export interface Membership { tenant: Tenant; role: string; }
@@ -30,7 +32,7 @@ export function safeReturnTo(raw: unknown): string | null {
   return s;
 }
 
-const TENANT_COLS = "id, slug, name, plan, plan_status, stripe_customer_id, stripe_subscription_id, alert_email, alert_webhook_url, alert_min_severity";
+const TENANT_COLS = "id, slug, name, plan, plan_status, stripe_customer_id, stripe_subscription_id, seats, payment_provider, paddle_customer_id, paddle_subscription_id, paddle_event_at, alert_email, alert_webhook_url, alert_min_severity";
 
 export class Accounts {
   constructor(private db: Db, private cfg: SaasConfig, private mailer: Mailer) {}
@@ -129,6 +131,10 @@ export class Accounts {
   }
   async tenantByCustomer(customerId: string): Promise<Tenant | null> {
     return ((await this.db.control.query(`SELECT ${TENANT_COLS} FROM tenants WHERE stripe_customer_id = $1`, [customerId])).rows[0] as Tenant) ?? null;
+  }
+
+  async tenantByPaddleCustomer(customerId: string): Promise<Tenant | null> {
+    return ((await this.db.control.query(`SELECT ${TENANT_COLS} FROM tenants WHERE paddle_customer_id = $1`, [customerId])).rows[0] as Tenant) ?? null;
   }
 
   async updateAlerts(tenantId: string, a: { alert_email?: string | null; alert_webhook_url?: string | null; alert_min_severity?: string }) {

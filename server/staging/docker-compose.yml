@@ -20,6 +20,7 @@ services:
       - ../migrations/006_courier.sql:/docker-entrypoint-initdb.d/60_006_courier.sql:ro
       - ../migrations/007_stripe_events_status.sql:/docker-entrypoint-initdb.d/70_007_stripe_events_status.sql:ro
       - ../migrations/009_plans_personal.sql:/docker-entrypoint-initdb.d/90_009_plans_personal.sql:ro
+      - ../migrations/010_paddle_seats.sql:/docker-entrypoint-initdb.d/91_010_paddle_seats.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U owner -d memory"]
       interval: 2s

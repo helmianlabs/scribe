@@ -16,7 +16,7 @@
 // row-level security switched on by 005/006 actually binds it.
 //
 // The chain is: 000_base -> 001_librarian -> 003_search_index -> 004_flags ->
-// 005_saas -> 006_courier -> 007_stripe_events_status -> 009_plans_personal.
+// 005_saas -> 006_courier -> 007_stripe_events_status -> 009_plans_personal -> 010_paddle_seats.
 // 002_fix_ro_role.sql is deliberately NOT in the chain:
 // it is a one-off fix for Sam's live claude_memory database (it references
 // Neon-specific roles) and is Sam's call, not a provisioning step.
@@ -39,6 +39,7 @@ const MIGRATIONS = [
   "006_courier.sql",
   "007_stripe_events_status.sql",
   "009_plans_personal.sql",
+  "010_paddle_seats.sql",
 ];
 const MIG_DIR = new URL("../../../migrations/", import.meta.url);
 
@@ -47,7 +48,7 @@ const EXPECTED_TABLES = [
   "projects", "conversations", "messages",
   "librarian_settings", "memory_categories", "librarian_rules", "memory_filings", "memory_moves",
   "tenants", "users", "memberships", "magic_links", "sessions", "oauth_clients", "oauth_pending",
-  "oauth_codes", "oauth_tokens", "api_keys", "stripe_events", "usage_daily", "tenant_storage",
+  "oauth_codes", "oauth_tokens", "api_keys", "stripe_events", "paddle_events", "usage_daily", "tenant_storage",
   "flags", "agent_messages", "agent_message_reads", "agent_directory",
 ];
 const EXPECTED_VIEWS = ["memory_current_filing", "memory_unsorted", "librarian_active_rules"];

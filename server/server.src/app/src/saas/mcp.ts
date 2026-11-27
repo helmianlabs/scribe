@@ -27,14 +27,14 @@ export interface McpCtx { db: Db; tenant: Tenant; scopes: string[]; publicUrl: s
 
 export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   const { db, tenant, scopes } = ctx;
-  const plan = planFor(tenant.plan, ctx.limitsOverride as never);
+  const plan = planFor(tenant.plan, ctx.limitsOverride as never, tenant.seats);
   const canWrite = scopes.includes("memory.write");
   const server = withInboxHint(new McpServer({ name: "helmian-scribe", title: "Helmian Scribe", version: "1.1.0-saas" }, { instructions: SERVER_INSTRUCTIONS }));
 
   /** Meter + run in a tenant transaction; limits and errors become plain tool errors. */
   async function run(kind: "call" | "save", fn: (q: Parameters<Parameters<Db["tenant"]>[1]>[0]) => Promise<Record<string, unknown>>) {
     try {
-      await db.tenant(tenant.id, (q) => countCall(q, tenant.id, kind));
+      await db.tenant(tenant.id, (q) => countCall(q, tenant.id, kind, plan));
       return json(await db.tenant(tenant.id, fn));
     } catch (e) {
       if (e instanceof LimitError) return fail(e.message);

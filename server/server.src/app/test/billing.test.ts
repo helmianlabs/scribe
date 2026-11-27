@@ -149,3 +149,23 @@ test("mock mode end-to-end still works without a Stripe key (checkout + portal)"
   assert.equal(po.body.mode, "mock");
   assert.match(po.body.url, /\/billing\/mock/);
 });
+
+test("Stripe Team: the seat quantity is recorded from the subscription, scales the plan, and drops to one seat on cancel", async () => {
+  const cookie = await signIn(s, "stripe-seats@example.com");
+  const me = (await api(s, cookie)("/api/me")).body;
+  const subEvent = (id: string, type: string, status: string, qty: number) => ({
+    id, object: "event", type, livemode: false,
+    data: { object: { id: "sub_seats", object: "subscription", customer: "cus_seats", status, metadata: { tenant_id: me.tenant.id, plan: "team" }, items: { data: [{ quantity: qty, price: { id: "price_team_test" } }] } } },
+  });
+  await postEvent(subEvent("evt_seats_1", "customer.subscription.created", "active", 4));
+  let now = (await api(s, cookie)("/api/me")).body;
+  assert.deepEqual([now.plan.id, now.tenant.seats, now.plan.maxMembers, now.plan.maxCallsPerDay, now.payment_provider], ["team", 4, 4, 40_000, "stripe"]);
+  await postEvent(subEvent("evt_seats_2", "customer.subscription.updated", "active", 9));
+  assert.equal((await api(s, cookie)("/api/me")).body.tenant.seats, 9);
+  await postEvent(subEvent("evt_seats_3", "customer.subscription.deleted", "canceled", 9));
+  now = (await api(s, cookie)("/api/me")).body;
+  assert.deepEqual([now.plan.id, now.tenant.seats], ["free", 1]);
+  // checkout validates seats before it reaches Stripe
+  const bad = await api(s, cookie)("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "team", seats: 0 }) });
+  assert.equal(bad.status, 400);
+});

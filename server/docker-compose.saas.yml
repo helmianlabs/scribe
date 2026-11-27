@@ -56,7 +56,14 @@ services:
       # Sign-in email — production boot REFUSES the dev mailer. Set both.
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       MAIL_FROM: ${MAIL_FROM:-}
-      # Billing — leave the secret blank to run with billing off (mock mode).
+      # Billing — PAYMENT_PROVIDER picks stripe (default) or paddle. Leave the provider's secret blank to run with billing off (mock mode).
+      PAYMENT_PROVIDER: ${PAYMENT_PROVIDER:-stripe}
+      PADDLE_API_KEY: ${PADDLE_API_KEY:-}
+      PADDLE_WEBHOOK_SECRET: ${PADDLE_WEBHOOK_SECRET:-}
+      PADDLE_CLIENT_TOKEN: ${PADDLE_CLIENT_TOKEN:-}
+      PADDLE_PRICE_PERSONAL: ${PADDLE_PRICE_PERSONAL:-}
+      PADDLE_PRICE_PERSONAL_YEARLY: ${PADDLE_PRICE_PERSONAL_YEARLY:-}
+      PADDLE_PRICE_TEAM: ${PADDLE_PRICE_TEAM:-}
       STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
       STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
       STRIPE_PRICE_PERSONAL: ${STRIPE_PRICE_PERSONAL:-}
