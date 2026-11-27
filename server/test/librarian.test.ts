@@ -121,7 +121,7 @@ test('plain-word custom rules', () => {
 });
 
 test('learned trigger from a manual move', () => {
-  const moved = item(18, 'Talked with Bryce about the Kokoro voice model latency.');
+  const moved = item(18, 'Notes on the Kokoro voice model latency.');
   assert.equal(classify(moved, PRESET_D).category, UNSORTED);
   const { rule } = learnFromMove(moved, 'helmian', PRESET_D);
   assert.ok(rule, 'a rule is learned');
