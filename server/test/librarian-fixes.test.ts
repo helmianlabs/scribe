@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import {
   checkCategory, classify, classifyBatch, knownCategories, learnFromMove, MAX_CHAIN_PASSES, parsePlainRule, planBackfill, PRESET_D, PRESETS,
-  trailOf, UNSORTED, withRetry, type MemoryItem, type Rule, type Rulebook,
+  trailOf, UNSORTED, withoutEntityShelves, ENTITY_SHELVES, withRetry, type MemoryItem, type Rule, type Rulebook,
 } from '../src/librarian/index.ts';
 import { addPlainRule, explainFiling, fileMessage, moveMemory, refileUnsorted } from '../src/server/librarian-store.ts';
 
@@ -288,4 +288,15 @@ test('backfill plan: uses custom + learned rules, re-files unsorted, leaves real
   assert.deepEqual({ n: plan.newlyFiled, r: plan.refiledUnsorted, f: plan.forced, s: plan.skipped, u: plan.stillUnsorted }, { n: 1, r: 1, f: 1, s: 1, u: 1 });
   // the old behaviour (preset only) would have left 1 and 2 unsorted
   assert.equal(classifyBatch(items, PRESET_D)[0].category, UNSORTED);
+});
+
+// ---------------------------------------------------------------- plan gating: the shelves are removable as a unit
+test('withoutEntityShelves: people, places and organizations (and their rules) are removed; every other shelf is untouched', () => {
+  const free = withoutEntityShelves(PRESET_D);
+  for (const slug of ENTITY_SHELVES) assert.ok(!free.categories.some((c) => c.slug === slug), `${slug} shelf removed`);
+  assert.ok(free.categories.length < PRESET_D.categories.length);
+  assert.ok(free.rules.length < PRESET_D.rules.length);
+  assert.equal(classify(item(1, 'Brendan at Banyan called'), PRESET_D).category, 'people');
+  assert.notEqual(classify(item(1, 'Brendan at Banyan called'), free).category, 'people');
+  assert.equal(classify(item(2, 'Notes on the Kokoro voice model latency helmian'), free).category, classify(item(2, 'Notes on the Kokoro voice model latency helmian'), PRESET_D).category);
 });

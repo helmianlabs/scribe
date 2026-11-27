@@ -68,3 +68,23 @@ export const ENTITY_RULES = (guard: string[]): Rule[] => [
     description: 'A kind of place is named (airport, county, warehouse, truck stop, ...).',
   },
 ];
+
+/** The shelves that exist only because of the entity rules. */
+export const ENTITY_SHELVES = ['people', 'places', 'organizations'] as const;
+/** Ids of the entity rules above, so a plan without entity shelves can drop exactly those and nothing else. */
+export const ENTITY_RULE_IDS: ReadonlySet<string> = new Set(
+  ENTITY_RULES([]).map((r) => r.id),
+);
+
+/**
+ * The same rulebook without the people / places / organizations shelves and the rules that feed them.
+ * Everything else (finance, projects, code, mailbox tags) is untouched, so a tenant without entity shelves files
+ * exactly as preset D does, minus those three shelves.
+ */
+export function withoutEntityShelves<T extends { rules: Rule[]; categories: { slug: string }[] }>(book: T): T {
+  return {
+    ...book,
+    rules: book.rules.filter((r) => !ENTITY_RULE_IDS.has(r.id)),
+    categories: book.categories.filter((c) => !(ENTITY_SHELVES as readonly string[]).includes(c.slug)),
+  };
+}

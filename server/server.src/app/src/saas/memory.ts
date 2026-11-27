@@ -6,32 +6,49 @@ import { isMailboxCategory } from "../courier/mailboxes.js";
 import { randomUUID } from "node:crypto";
 import type { Q } from "./db.js";
 import {
-  checkCategory, classify, knownCategories, learnFromMove, parsePlainRule, planBackfill, PLAIN_RULE_HELP, PRESETS, trailOf, trailSummary, UNSORTED, withRetry,
+  checkCategory, classify, knownCategories, withoutEntityShelves, learnFromMove, parsePlainRule, planBackfill, PLAIN_RULE_HELP, PRESETS, trailOf, trailSummary, UNSORTED, withRetry,
   type Filing, type MemoryItem, type RetryOptions, type Rule, type Rulebook,
 } from "../librarian/index.js";
-import { LimitError, type Plan } from "./plans.js";
+import { LimitError, fmtBytes, type Plan } from "./plans.js";
 
 export const ENGINE_VERSION = "librarian-0.3.0+saas";
 
 const iso = (d: unknown) => (d instanceof Date ? d.toISOString() : String(d));
 
 // ------------------------------------------------------------------ usage + limits
-export async function countCall(q: Q, tenantId: string, plan: Plan, kind: "call" | "save" = "call"): Promise<number> {
-  const r = await q.query(
-    `INSERT INTO usage_daily (tenant_id, day, calls, saves) VALUES ($1, CURRENT_DATE, 1, $2)
-     ON CONFLICT (tenant_id, day) DO UPDATE SET calls = usage_daily.calls + 1, saves = usage_daily.saves + EXCLUDED.saves
-     RETURNING calls`, [tenantId, kind === "save" ? 1 : 0]);
-  const calls = Number(r.rows[0].calls);
-  if (calls > plan.callsPerDay) {
-    throw new LimitError(`Daily limit reached: the ${plan.name} plan allows ${plan.callsPerDay.toLocaleString("en-US")} calls a day. Upgrade on your dashboard or try again tomorrow (UTC).`, "calls");
-  }
-  return calls;
+/** The UTC calendar day, as the database sees it. Every usage_daily read and write uses this one expression. */
+const UTC_DAY = "(now() AT TIME ZONE 'UTC')::date";
+
+/** Seconds until the next UTC midnight (the daily cap resets then). */
+export function secondsToUtcMidnight(now = new Date()): number {
+  return Math.max(1, Math.ceil((Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) - now.getTime()) / 1000));
 }
 
-export async function usage(q: Q, tenantId: string): Promise<{ memories: number; calls_today: number; saves_today: number }> {
+/**
+ * Meters a call in usage_daily and enforces the plan's daily call cap. The counter lives in the database, so the cap holds
+ * across restarts and replicas. The increment is one statement: the row is only updated while it is under the cap, and a
+ * refused call is not counted. Two concurrent calls cannot both take the last slot (the upsert takes the row lock).
+ * `plan` is omitted only by callers that must meter without limiting.
+ */
+export async function countCall(q: Q, tenantId: string, kind: "call" | "save" = "call", plan?: Plan): Promise<number> {
+  const cap = plan ? plan.maxCallsPerDay : null;
+  const r = await q.query(
+    `INSERT INTO usage_daily (tenant_id, day, calls, saves) VALUES ($1, ${UTC_DAY}, 1, $2)
+     ON CONFLICT (tenant_id, day) DO UPDATE SET calls = usage_daily.calls + 1, saves = usage_daily.saves + EXCLUDED.saves
+       WHERE $3::int IS NULL OR usage_daily.calls < $3::int
+     RETURNING calls`, [tenantId, kind === "save" ? 1 : 0, cap]);
+  if (!r.rows.length) {
+    const upgrade = plan!.id === "free" ? " Upgrade to Personal for a higher limit." : "";
+    throw new LimitError(`Daily limit reached: the ${plan!.name} plan allows ${cap!.toLocaleString("en-US")} calls a day. It resets at midnight UTC.${upgrade} Nothing was lost; try again after the reset.`, "calls");
+  }
+  return Number(r.rows[0].calls);
+}
+
+export async function usage(q: Q, tenantId: string): Promise<{ memories: number; bytes: number; calls_today: number; saves_today: number }> {
   const m = await q.query("SELECT count(*)::int AS n FROM messages WHERE tenant_id = $1", [tenantId]);
-  const u = await q.query("SELECT calls, saves FROM usage_daily WHERE tenant_id = $1 AND day = CURRENT_DATE", [tenantId]);
-  return { memories: m.rows[0].n, calls_today: u.rows[0]?.calls ?? 0, saves_today: u.rows[0]?.saves ?? 0 };
+  const b = await q.query("SELECT bytes FROM tenant_storage WHERE tenant_id = $1", [tenantId]);
+  const u = await q.query(`SELECT calls, saves FROM usage_daily WHERE tenant_id = $1 AND day = ${UTC_DAY}`, [tenantId]);
+  return { memories: m.rows[0].n, bytes: Number(b.rows[0]?.bytes ?? 0), calls_today: u.rows[0]?.calls ?? 0, saves_today: u.rows[0]?.saves ?? 0 };
 }
 
 // ------------------------------------------------------------------ search / save
@@ -75,15 +92,28 @@ export async function getMessageById(q: Q, tenantId: string, id: number): Promis
 export interface SaveParams { content: string; source: string; category?: string; tags?: string[]; }
 
 export async function saveMemory(q: Q, tenantId: string, plan: Plan, p: SaveParams) {
-  const n = (await q.query("SELECT count(*)::int AS n FROM messages WHERE tenant_id = $1", [tenantId])).rows[0].n as number;
-  if (n >= plan.maxMemories) {
-    throw new LimitError(`Storage limit reached: the ${plan.name} plan holds ${plan.maxMemories.toLocaleString("en-US")} memories. Upgrade, or export and delete old ones.`, "memories");
+  const upgrade = plan.id === "free" ? " Upgrade to Personal, or export your memories." : " Export your memories, or contact support.";
+  if (plan.maxMemories !== null) {
+    const n = (await q.query("SELECT count(*)::int AS n FROM messages WHERE tenant_id = $1", [tenantId])).rows[0].n as number;
+    if (n >= plan.maxMemories) {
+      throw new LimitError(`Memory limit reached: the ${plan.name} plan holds ${plan.maxMemories.toLocaleString("en-US")} memories.${upgrade} Search, read and export still work.`, "memories");
+    }
   }
   const source = p.source.trim().toLowerCase();
   const category = p.category?.trim();
   const notebook = category ? `Shared Memory — ${category}` : `Shared Memory — ${source}`;
   const tags = (p.tags ?? []).map((t) => t.trim()).filter(Boolean);
   const text = tags.length ? `[tags: ${tags.join(", ")}]\n${p.content}` : p.content;
+
+  // Stored bytes: one counter row per tenant, bumped here in the same transaction as the insert below. The upsert takes the
+  // row lock, so concurrent saves are serialised and cannot jointly overshoot; throwing rolls the bump back with the save.
+  const bumped = await q.query(
+    `INSERT INTO tenant_storage (tenant_id, bytes) VALUES ($1, $2)
+     ON CONFLICT (tenant_id) DO UPDATE SET bytes = tenant_storage.bytes + EXCLUDED.bytes, updated_at = now() RETURNING bytes`,
+    [tenantId, Buffer.byteLength(text, "utf8")]);
+  if (Number(bumped.rows[0].bytes) > plan.maxBytes) {
+    throw new LimitError(`Storage limit reached: the ${plan.name} plan holds ${fmtBytes(plan.maxBytes)} of memories.${upgrade} Search, read and export still work.`, "bytes");
+  }
 
   const existing = await q.query("SELECT uuid FROM conversations WHERE tenant_id = $1 AND name = $2 ORDER BY created_at ASC LIMIT 1", [tenantId, notebook]);
   let conv: string;
@@ -103,12 +133,15 @@ export async function saveMemory(q: Q, tenantId: string, plan: Plan, p: SavePara
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 export class TenantLibrarian {
-  constructor(private q: Q, private tenantId: string, private retry: RetryOptions = {}) {}
+  /** `plan` is optional so callers without one (tests, tools) keep the full feature set; the hosted server always passes it. */
+  constructor(private q: Q, private tenantId: string, private retry: RetryOptions = {}, private plan?: Plan) {}
 
   async rulebook(): Promise<Rulebook> {
     const r = await this.q.query("SELECT rulebook FROM librarian_settings WHERE tenant_id = $1 ORDER BY chosen_at DESC, id DESC LIMIT 1", [this.tenantId]);
     const id = r.rows[0]?.rulebook as string | undefined;
-    return Object.values(PRESETS).find((b) => b.id === id) ?? PRESETS.D;
+    const book = Object.values(PRESETS).find((b) => b.id === id) ?? PRESETS.D;
+    // Plans without the people / places / companies shelves file with the same rulebook minus those shelves.
+    return this.plan && !this.plan.features.entityShelves ? withoutEntityShelves(book) : book;
   }
 
   async extraRules(): Promise<Rule[]> {
@@ -232,7 +265,9 @@ export class TenantLibrarian {
       [this.tenantId])).rows.map((x) => ({ id: Number(x.id), text: x.text ?? "", sender: x.sender, conversationName: x.conv }));
     const { rule, note } = isMailboxCategory(toCategory) || isMailboxCategory(before.category)
       ? { rule: null, note: "Mailbox move recorded; no rule learned (moves into or out of for-<agent> mailboxes never teach the Librarian)." }
-      : learnFromMove(item, toCategory, book, extra, ref);
+      : this.plan && !this.plan.features.learning
+        ? { rule: null, note: "Moved. Learning from your moves is part of the Personal plan, so no rule was learned; you can still type a rule with add_rule." }
+        : learnFromMove(item, toCategory, book, extra, ref);
     if (rule) await this.q.query("INSERT INTO librarian_rules (tenant_id, rule_key, layer, rule_json, created_by) VALUES ($1,$2,'learned',$3,$4)", [this.tenantId, rule.id, JSON.stringify(rule), movedBy]);
     await this.q.query("INSERT INTO memory_moves (tenant_id, message_id, from_category, to_category, learned_rule, moved_by) VALUES ($1,$2,$3,$4,$5,$6)", [this.tenantId, id, before.category, toCategory, rule?.id ?? null, movedBy]);
     // Stored matches are refreshed: the rules that match NOW (including the one just learned) plus the hand move itself.
@@ -255,6 +290,14 @@ export class TenantLibrarian {
     }
     // Unique id under concurrency: serialise rule creation per tenant for the rest of this transaction, then take max + 1.
     await this.q.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`librarian_rule:${this.tenantId}`]);
+    // Typed-rule cap. Counted under the lock above, so concurrent adds cannot jointly pass it. Only rules typed with add_rule
+    // (layer custom) count; a rule that was replaced or disabled no longer appears in librarian_active_rules.
+    if (this.plan && this.plan.maxTypedRules !== null) {
+      const typed = (await this.q.query("SELECT count(*)::int AS n FROM librarian_active_rules WHERE tenant_id = $1 AND layer = 'custom'", [this.tenantId])).rows[0].n as number;
+      if (typed >= this.plan.maxTypedRules) {
+        throw new LimitError(`Rule limit reached: the ${this.plan.name} plan allows ${this.plan.maxTypedRules} typed rules. Upgrade to Personal for unlimited rules.`, "rules");
+      }
+    }
     const n = (await this.q.query(
       "SELECT COALESCE(MAX(substring(rule_key from 8)::int), 0) + 1 AS n FROM librarian_rules WHERE tenant_id = $1 AND rule_key ~ '^custom\\.[0-9]+$'", [this.tenantId])).rows[0].n as number;
     const rule = { ...parsePlainRule(sentence, `custom.${n}`)!, category };
@@ -285,5 +328,6 @@ export async function deleteAll(q: Q, tenantId: string): Promise<Record<string, 
     const r = await q.query(`WITH d AS (DELETE FROM ${t} WHERE tenant_id = $1 RETURNING 1) SELECT count(*)::int AS n FROM d`, [tenantId]);
     counts[t] = r.rows[0].n;
   }
+  await q.query("UPDATE tenant_storage SET bytes = 0, updated_at = now() WHERE tenant_id = $1", [tenantId]);
   return counts;
 }

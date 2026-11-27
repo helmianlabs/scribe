@@ -53,7 +53,7 @@ test("unpaid (and payment-status-less) checkout.session.completed activates noth
   const me = (await api(s, cookie)("/api/me")).body;
   assert.equal(me.plan.id, "free");
 
-  const unpaid = await postEvent(checkoutEvent("evt_b8_unpaid", me.tenant.id, "pro", "unpaid"));
+  const unpaid = await postEvent(checkoutEvent("evt_b8_unpaid", me.tenant.id, "personal", "unpaid"));
   assert.equal(unpaid.status, 200);
   assert.equal(unpaid.body.applied, false, "unpaid session must not report an apply");
   assert.equal(await planOf(cookie), "free", "unpaid session leaves the tenant on Free");
@@ -61,7 +61,7 @@ test("unpaid (and payment-status-less) checkout.session.completed activates noth
   assert.equal(row1.apply_status, "applied", "the event was handled deterministically — redelivery cannot change its payment_status");
   assert.equal(row1.attempts, 1);
 
-  const noStatus = await postEvent(checkoutEvent("evt_b8_nostatus", me.tenant.id, "pro"));
+  const noStatus = await postEvent(checkoutEvent("evt_b8_nostatus", me.tenant.id, "personal"));
   assert.equal(noStatus.status, 200);
   assert.equal(noStatus.body.applied, false, "a missing payment_status proves nothing and must not activate");
   assert.equal(await planOf(cookie), "free");
@@ -81,9 +81,9 @@ test("paid checkout.session.completed activates; no_payment_required (trial/disc
 
   const trialCookie = await signIn(s, "trial@example.com");
   const trialMe = (await api(s, trialCookie)("/api/me")).body;
-  const trial = await postEvent(checkoutEvent("evt_b8_trial", trialMe.tenant.id, "pro", "no_payment_required"));
+  const trial = await postEvent(checkoutEvent("evt_b8_trial", trialMe.tenant.id, "personal", "no_payment_required"));
   assert.equal(trial.body.applied, true);
-  assert.equal(await planOf(trialCookie), "pro");
+  assert.equal(await planOf(trialCookie), "personal");
 });
 
 test("apply failure -> 500 + 'failed' row; redelivery applies exactly once; third delivery is a duplicate", async () => {
@@ -94,7 +94,7 @@ test("apply failure -> 500 + 'failed' row; redelivery applies exactly once; thir
     data: {
       object: {
         id: "sub_b8_retry", object: "subscription", customer: "cus_b8_retry", status: "active",
-        metadata: { tenant_id: me.tenant.id, plan: "pro" },
+        metadata: { tenant_id: me.tenant.id, plan: "personal" },
         items: { data: [{ price: { id: "price_pro_test" } }] },
       },
     },
@@ -122,7 +122,7 @@ test("apply failure -> 500 + 'failed' row; redelivery applies exactly once; thir
   assert.equal(second.status, 200);
   assert.equal(second.body.duplicate, undefined);
   assert.equal(second.body.applied, true);
-  assert.equal(await planOf(cookie), "pro", "the redelivery applied the entitlement");
+  assert.equal(await planOf(cookie), "personal", "the redelivery applied the entitlement");
   const applied = await eventRow("evt_b8_retry");
   assert.equal(applied.apply_status, "applied");
   assert.equal(applied.attempts, 2, "exactly two claims: the failed delivery and the successful redelivery");
@@ -135,12 +135,12 @@ test("apply failure -> 500 + 'failed' row; redelivery applies exactly once; thir
   assert.equal(third.status, 200);
   assert.equal(third.body.duplicate, true);
   assert.equal((await eventRow("evt_b8_retry")).attempts, 2);
-  assert.equal(await planOf(cookie), "pro");
+  assert.equal(await planOf(cookie), "personal");
 });
 
 test("mock mode end-to-end still works without a Stripe key (checkout + portal)", async () => {
   const cookie = await signIn(s, "mocky@example.com");
-  const co = await api(s, cookie)("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "pro" }) });
+  const co = await api(s, cookie)("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "personal" }) });
   assert.equal(co.status, 200);
   assert.equal(co.body.mode, "mock");
   assert.match(co.body.url, /\/billing\/mock/);
@@ -148,4 +148,24 @@ test("mock mode end-to-end still works without a Stripe key (checkout + portal)"
   assert.equal(po.status, 200);
   assert.equal(po.body.mode, "mock");
   assert.match(po.body.url, /\/billing\/mock/);
+});
+
+test("Stripe Team: the seat quantity is recorded from the subscription, scales the plan, and drops to one seat on cancel", async () => {
+  const cookie = await signIn(s, "stripe-seats@example.com");
+  const me = (await api(s, cookie)("/api/me")).body;
+  const subEvent = (id: string, type: string, status: string, qty: number) => ({
+    id, object: "event", type, livemode: false,
+    data: { object: { id: "sub_seats", object: "subscription", customer: "cus_seats", status, metadata: { tenant_id: me.tenant.id, plan: "team" }, items: { data: [{ quantity: qty, price: { id: "price_team_test" } }] } } },
+  });
+  await postEvent(subEvent("evt_seats_1", "customer.subscription.created", "active", 4));
+  let now = (await api(s, cookie)("/api/me")).body;
+  assert.deepEqual([now.plan.id, now.tenant.seats, now.plan.maxMembers, now.plan.maxCallsPerDay, now.payment_provider], ["team", 4, 4, 40_000, "stripe"]);
+  await postEvent(subEvent("evt_seats_2", "customer.subscription.updated", "active", 9));
+  assert.equal((await api(s, cookie)("/api/me")).body.tenant.seats, 9);
+  await postEvent(subEvent("evt_seats_3", "customer.subscription.deleted", "canceled", 9));
+  now = (await api(s, cookie)("/api/me")).body;
+  assert.deepEqual([now.plan.id, now.tenant.seats], ["free", 1]);
+  // checkout validates seats before it reaches Stripe
+  const bad = await api(s, cookie)("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "team", seats: 0 }) });
+  assert.equal(bad.status, 400);
 });

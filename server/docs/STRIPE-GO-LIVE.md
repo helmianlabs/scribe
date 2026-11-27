@@ -11,8 +11,8 @@ order; each step names exactly where the value goes.
 > never take keys, prices, or webhook secrets from there. Prices, products
 > and webhooks created in the wrong account will silently do nothing here.
 
-Placeholders decided so far: **Pro $15/mo, Team $49/mo** (`plans.ts` display
-values + the product script). If the final prices differ, change the script's
+Prices decided so far (owner-approved 2026-11-26): **Personal $8/mo or $80/yr,
+Team $15 per seat per month** (`plans.ts` display values + the product script). If the final prices differ, change the script's
 `PLANS` amounts *before* step 2 — the script is idempotent by `lookup_key`,
 but it reuses an existing price as-is and does not update amounts.
 
@@ -38,12 +38,13 @@ From `server.src/app`, with the test key in the environment:
 STRIPE_SECRET_KEY=sk_test_... node scripts/stripe-create-products.mjs --apply
 ```
 
-Idempotent: it finds prices by `lookup_key` (`helmian_scribe_pro_monthly`,
-`helmian_scribe_team_monthly`) and creates product + monthly price only when
-missing. It prints the two lines to paste into the server env:
+Idempotent: it finds prices by `lookup_key` (`helmian_scribe_personal_monthly`,
+`helmian_scribe_personal_yearly`, `helmian_scribe_team_monthly`) and creates the
+product and price only when missing. It prints the three lines to paste into the server env:
 
 ```
-STRIPE_PRICE_PRO=price_...
+STRIPE_PRICE_PERSONAL=price_...
+STRIPE_PRICE_PERSONAL_YEARLY=price_...
 STRIPE_PRICE_TEAM=price_...
 ```
 
@@ -52,7 +53,7 @@ STRIPE_PRICE_TEAM=price_...
 In the Helmian labs dashboard (test mode), Developers → Webhooks → Add
 endpoint:
 
-- URL: `<PUBLIC_URL>/webhooks/stripe` (e.g. `https://connect.helmian.cloud/webhooks/stripe`)
+- URL: `<PUBLIC_URL>/webhooks/stripe` (e.g. `https://scribemem.helmian.cloud/webhooks/stripe`)
 - Events — exactly these four:
   `checkout.session.completed`, `customer.subscription.created`,
   `customer.subscription.updated`, `customer.subscription.deleted`
@@ -70,11 +71,11 @@ Billing → Customer portal) or the portal button will fail for customers.
 ## Step 4 — Restart + prove one test checkout
 
 Restart the SaaS server (boot validation now requires the Stripe config to
-be complete: secret key + webhook secret + both prices, or it refuses).
-Then, signed in as a tenant owner: Dashboard → upgrade to Pro → pay with
+be complete: secret key + webhook secret + all three prices, or it refuses).
+Then, signed in as a tenant owner: Dashboard → upgrade to Personal → pay with
 the test card `4242 4242 4242 4242` (any future date/CVC). Confirm:
 
-- the tenant shows plan **pro** afterwards;
+- the tenant shows plan **personal** afterwards;
 - `stripe_events` has the `checkout.session.completed` row with
   `apply_status = 'applied'`;
 - cancel from the portal and confirm the plan returns to **free**
@@ -95,7 +96,7 @@ Only when test mode is proven end to end and final prices are set:
    `node scripts/stripe-create-products.mjs --apply --live` with
    `STRIPE_ALLOW_LIVE=yes-i-mean-live` in its environment.
 2. In the server env, swap in the live `STRIPE_SECRET_KEY`, live
-   `STRIPE_PRICE_PRO` / `STRIPE_PRICE_TEAM`, live `STRIPE_WEBHOOK_SECRET`,
+   `STRIPE_PRICE_PERSONAL` / `STRIPE_PRICE_PERSONAL_YEARLY` / `STRIPE_PRICE_TEAM`, live `STRIPE_WEBHOOK_SECRET`,
    and add the one flag:
 
    ```

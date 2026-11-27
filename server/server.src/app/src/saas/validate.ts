@@ -31,11 +31,13 @@ export const MIGRATION_FILES = [
   "005_saas.sql",
   "006_courier.sql",
   "007_stripe_events_status.sql",
+  "009_plans_personal.sql",
+  "010_paddle_seats.sql",
 ];
 // Tables 005/006 put under FORCE row-level security with a tenant_isolation policy.
 const RLS_TABLES = [
   "conversations", "messages", "projects", "librarian_settings", "librarian_rules",
-  "memory_filings", "memory_moves", "flags", "usage_daily",
+  "memory_filings", "memory_moves", "flags", "usage_daily", "tenant_storage",
   "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory",
 ];
 
@@ -72,7 +74,7 @@ export function assessConfig(cfg: SaasConfig, production: boolean): ConfigAssess
   } else {
     const local = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(url.hostname);
     if (production) {
-      if (!process.env.PUBLIC_URL) problems.push("PUBLIC_URL is not set — it silently defaulted to http://localhost:8080 (config.ts). Set it to the exact public https origin (e.g. https://connect.helmian.cloud).");
+      if (!process.env.PUBLIC_URL) problems.push("PUBLIC_URL is not set — it silently defaulted to http://localhost:8080 (config.ts). Set it to the exact public https origin (e.g. https://scribemem.helmian.cloud).");
       if (local) problems.push(`PUBLIC_URL points at ${url.hostname} in production posture. OAuth issuer/resource URLs and cookies would be minted for a loopback origin no client can reach.`);
       if (url.protocol !== "https:") problems.push(`PUBLIC_URL must be an https:// origin in production posture (got ${url.protocol}//). TLS is terminated at the reverse proxy; the public origin is still https.`);
     } else if (local) {
@@ -94,17 +96,48 @@ export function assessConfig(cfg: SaasConfig, production: boolean): ConfigAssess
     }
   }
 
+  // --- Payment provider: PAYMENT_PROVIDER picks one; a typo must not silently fall back to Stripe.
+  const rawProvider = process.env.PAYMENT_PROVIDER?.trim();
+  if (rawProvider && rawProvider !== "stripe" && rawProvider !== "paddle") {
+    problems.push(`PAYMENT_PROVIDER is "${rawProvider}"; it must be "stripe" or "paddle" (or unset, which means stripe).`);
+  }
+
+  // --- Paddle: fully configured or fully off — never half. Only checked when it is the selected provider or a key is set.
+  const pd = cfg.paddle;
+  if (cfg.paymentProvider === "paddle" || pd.apiKey) {
+    if (pd.apiKey) {
+      const missing: string[] = [];
+      if (!pd.webhookSecret) missing.push("PADDLE_WEBHOOK_SECRET");
+      if (!pd.clientToken) missing.push("PADDLE_CLIENT_TOKEN");
+      if (!pd.prices.personal) missing.push("PADDLE_PRICE_PERSONAL");
+      if (!pd.prices.personalYearly) missing.push("PADDLE_PRICE_PERSONAL_YEARLY");
+      if (!pd.prices.team) missing.push("PADDLE_PRICE_TEAM");
+      if (missing.length) problems.push(`Paddle is half-configured: PADDLE_API_KEY is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Either complete the billing configuration or unset PADDLE_API_KEY to run with billing off.`);
+      const sandboxKey = pd.apiKey.includes("_sdbx");
+      if (!sandboxKey && !pd.allowLive) problems.push("PADDLE_API_KEY is a LIVE key but PADDLE_ALLOW_LIVE is not set to 'yes-i-mean-live'. Live billing is a deliberate, separate decision — refusing to boot.");
+      if (pd.clientToken) {
+        if (sandboxKey && !pd.clientToken.startsWith("test_")) problems.push("PADDLE_API_KEY is a sandbox key but PADDLE_CLIENT_TOKEN is not a sandbox token (sandbox tokens start with test_). Sandbox and live credentials cannot be mixed.");
+        if (!sandboxKey && !pd.clientToken.startsWith("live_")) problems.push("PADDLE_API_KEY is a live key but PADDLE_CLIENT_TOKEN is not a live token (live tokens start with live_). Sandbox and live credentials cannot be mixed.");
+      }
+    } else {
+      warnings.push("PAYMENT_PROVIDER is paddle but PADDLE_API_KEY is not set — billing runs in mock mode (checkout disabled, plans display-only).");
+    }
+  }
+
   // --- Stripe: fully configured or fully off — never half.
   const s = cfg.stripe;
-  if (s.secretKey) {
+  if (cfg.paymentProvider === "paddle" && !s.secretKey) {
+    // Paddle is the provider; Stripe is intentionally off. No Stripe warning.
+  } else if (s.secretKey) {
     const missing: string[] = [];
     if (!s.webhookSecret) missing.push("STRIPE_WEBHOOK_SECRET");
-    if (!s.prices.pro) missing.push("STRIPE_PRICE_PRO");
+    if (!s.prices.personal) missing.push("STRIPE_PRICE_PERSONAL");
+    if (!s.prices.personalYearly) missing.push("STRIPE_PRICE_PERSONAL_YEARLY");
     if (!s.prices.team) missing.push("STRIPE_PRICE_TEAM");
     if (missing.length) problems.push(`Stripe is half-configured: STRIPE_SECRET_KEY is set but ${missing.join(", ")} ${missing.length === 1 ? "is" : "are"} missing. Either complete the billing configuration or unset STRIPE_SECRET_KEY to run with billing off.`);
     if (s.secretKey.startsWith("sk_live") && !s.allowLive) problems.push("STRIPE_SECRET_KEY is a LIVE key but STRIPE_ALLOW_LIVE is not set to 'yes-i-mean-live'. Live billing is a deliberate, separate decision — refusing to boot.");
   } else {
-    warnings.push("Stripe is not configured — billing runs in mock mode (checkout disabled, plans display-only). Set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET + STRIPE_PRICE_PRO/TEAM to enable it.");
+    warnings.push("Stripe is not configured — billing runs in mock mode (checkout disabled, plans display-only). Set STRIPE_SECRET_KEY + STRIPE_WEBHOOK_SECRET + STRIPE_PRICE_PERSONAL + STRIPE_PRICE_PERSONAL_YEARLY + STRIPE_PRICE_TEAM to enable it.");
   }
 
   if (!cfg.databaseUrl) problems.push("DATABASE_URL is not set.");

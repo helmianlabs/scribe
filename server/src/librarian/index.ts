@@ -9,3 +9,4 @@ export * from './categories.ts';
 export * from './trail.ts';
 export * from './repair.ts';
 export * from './graph.ts';
+export { ENTITY_RULE_IDS, ENTITY_SHELVES, withoutEntityShelves } from './entities.ts';

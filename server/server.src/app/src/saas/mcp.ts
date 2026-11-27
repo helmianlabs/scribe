@@ -27,14 +27,14 @@ export interface McpCtx { db: Db; tenant: Tenant; scopes: string[]; publicUrl: s
 
 export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   const { db, tenant, scopes } = ctx;
-  const plan = planFor(tenant.plan, ctx.limitsOverride as never);
+  const plan = planFor(tenant.plan, ctx.limitsOverride as never, tenant.seats);
   const canWrite = scopes.includes("memory.write");
   const server = withInboxHint(new McpServer({ name: "helmian-scribe", title: "Helmian Scribe", version: "1.1.0-saas" }, { instructions: SERVER_INSTRUCTIONS }));
 
   /** Meter + run in a tenant transaction; limits and errors become plain tool errors. */
   async function run(kind: "call" | "save", fn: (q: Parameters<Parameters<Db["tenant"]>[1]>[0]) => Promise<Record<string, unknown>>) {
     try {
-      await db.tenant(tenant.id, (q) => countCall(q, tenant.id, plan, kind));
+      await db.tenant(tenant.id, (q) => countCall(q, tenant.id, kind, plan));
       return json(await db.tenant(tenant.id, fn));
     } catch (e) {
       if (e instanceof LimitError) return fail(e.message);
@@ -109,7 +109,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
       const saved = await saveMemory(q, tenant.id, plan, { content: prepared.text, source: p.source, category: p.category ? scanText(p.category).redacted : undefined, tags });
       let filing: Record<string, unknown> = {};
       try {
-        const f = await new TenantLibrarian(q, tenant.id).fileSaved({ id: saved.message_id, text: saved.text, sender: p.source, source: p.source, conversationName: saved.conversation_name });
+        const f = await new TenantLibrarian(q, tenant.id, {}, plan).fileSaved({ id: saved.message_id, text: saved.text, sender: p.source, source: p.source, conversationName: saved.conversation_name });
         filing = { filed_in: f.category, filing_tags: f.tags, filing_reason: f.explanation, filing_recorded: f.recorded, ...(f.error ? { filing_error: f.error } : {}) };
       } catch (e) { filing = { filed_in: "unsorted", filing_reason: `Librarian error: ${(e as Error).message}`, filing_recorded: false }; }
       const flagged = await recordFlags(q, tenant.id, findingsToFlags(prepared.findings, { source_ai: p.source, reporter: "server", message_id: saved.message_id }), alertTargetFor(tenant, ctx.publicUrl));
@@ -122,13 +122,13 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     title: "List the Unsorted Tray", description: "Memories the Librarian could not file. Read-only.",
     inputSchema: { limit: z.number().int().min(1).max(100).default(20) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async (p: { limit?: number }) => run("call", (q) => new TenantLibrarian(q, tenant.id).listUnsorted(p.limit ?? 20)));
+  }, async (p: { limit?: number }) => run("call", (q) => new TenantLibrarian(q, tenant.id, {}, plan).listUnsorted(p.limit ?? 20)));
 
   server.registerTool("explain_filing", {
     title: "Explain a Filing", description: "Which shelf a memory is on, the rule that decided it, and EVERY rule that matched (matched_rules). Read-only.",
     inputSchema: { message_id: z.number().int().min(1) },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-  }, async (p: { message_id: number }) => run("call", (q) => new TenantLibrarian(q, tenant.id).explain(p.message_id) as Promise<Record<string, unknown>>));
+  }, async (p: { message_id: number }) => run("call", (q) => new TenantLibrarian(q, tenant.id, {}, plan).explain(p.message_id) as Promise<Record<string, unknown>>));
 
   server.registerTool("move_memory", {
     title: "Move a Memory", description: "Move a memory to another shelf; the Librarian may learn a trigger from it. Requires memory.write.",
@@ -136,7 +136,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (p: { message_id: number; to_category: string; source: string; confirm_new_category?: boolean }) => {
     if (!canWrite) return needWrite("move_memory");
-    return run("call", (q) => new TenantLibrarian(q, tenant.id).move(p.message_id, p.to_category.toLowerCase(), p.source, { confirmNewCategory: p.confirm_new_category }) as Promise<Record<string, unknown>>);
+    return run("call", (q) => new TenantLibrarian(q, tenant.id, {}, plan).move(p.message_id, p.to_category.toLowerCase(), p.source, { confirmNewCategory: p.confirm_new_category }) as Promise<Record<string, unknown>>);
   });
 
   server.registerTool("add_rule", {
@@ -145,7 +145,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   }, async (p: { rule: string; source: string; confirm_new_category?: boolean }) => {
     if (!canWrite) return needWrite("add_rule");
-    return run("call", (q) => new TenantLibrarian(q, tenant.id).addRule(p.rule, p.source, { confirmNewCategory: p.confirm_new_category }) as Promise<Record<string, unknown>>);
+    return run("call", (q) => new TenantLibrarian(q, tenant.id, {}, plan).addRule(p.rule, p.source, { confirmNewCategory: p.confirm_new_category }) as Promise<Record<string, unknown>>);
   });
 
   server.registerTool("report_flag", {

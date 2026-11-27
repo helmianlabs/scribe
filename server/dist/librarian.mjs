@@ -374,6 +374,9 @@ var ENTITY_RULES = (guard) => [
     description: "A kind of place is named (airport, county, warehouse, truck stop, ...)."
   }
 ];
+var ENTITY_RULE_IDS = new Set(
+  ENTITY_RULES([]).map((r) => r.id)
+);
 
 // src/librarian/vocab.ts
 var PROJECTS = {

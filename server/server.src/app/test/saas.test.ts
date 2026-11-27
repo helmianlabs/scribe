@@ -9,7 +9,7 @@ let aliceMe: any, bobMe: any;
 let aliceTok: any;
 
 before(async () => {
-  s = await startSaas({ limitsOverride: { free: { callsPerDay: 40 } } });
+  s = await startSaas();
   alice = await signIn(s, "alice@example.com");
   bob = await signIn(s, "Bob@Example.com");
   aliceMe = (await api(s, alice)("/api/me")).body;
@@ -160,7 +160,7 @@ test("Flags API: API key reports a flag (excerpt redacted), lists, scans; bad ke
 });
 
 test("checkout without a Stripe key is a clearly-marked mock", async () => {
-  const r = await api(s, alice)("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "pro" }) });
+  const r = await api(s, alice)("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "personal" }) });
   assert.equal(r.status, 200);
   assert.equal(r.body.mode, "mock");
   assert.match(r.body.url, /\/billing\/mock/);
@@ -168,14 +168,14 @@ test("checkout without a Stripe key is a clearly-marked mock", async () => {
 
 test("Stripe webhook: bad signature refused; signed checkout.session.completed sets the plan; replay is idempotent", async () => {
   const secret = s.cfg.stripe.webhookSecret!;
-  const event = { id: "evt_test_1", object: "event", type: "checkout.session.completed", livemode: false, data: { object: { id: "cs_test_1", object: "checkout.session", client_reference_id: aliceMe.tenant.id, customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { tenant_id: aliceMe.tenant.id, plan: "pro" } } } };
+  const event = { id: "evt_test_1", object: "event", type: "checkout.session.completed", livemode: false, data: { object: { id: "cs_test_1", object: "checkout.session", client_reference_id: aliceMe.tenant.id, customer: "cus_test_1", subscription: "sub_test_1", payment_status: "paid", metadata: { tenant_id: aliceMe.tenant.id, plan: "personal" } } } };
   const payload = JSON.stringify(event);
   const bad = await fetch(`${s.base}/webhooks/stripe`, { method: "POST", headers: { "Content-Type": "application/json", "Stripe-Signature": "t=1,v1=deadbeef" }, body: payload });
   assert.equal(bad.status, 400);
   const header = Stripe.webhooks.generateTestHeaderString({ payload, secret });
   const ok = await fetch(`${s.base}/webhooks/stripe`, { method: "POST", headers: { "Content-Type": "application/json", "Stripe-Signature": header }, body: payload });
   assert.equal(ok.status, 200);
-  assert.equal((await api(s, alice)("/api/me")).body.plan.id, "pro");
+  assert.equal((await api(s, alice)("/api/me")).body.plan.id, "personal");
   const again = await fetch(`${s.base}/webhooks/stripe`, { method: "POST", headers: { "Content-Type": "application/json", "Stripe-Signature": header }, body: payload });
   assert.equal((await again.json()).duplicate, true);
   // cancellation drops to free
@@ -211,15 +211,11 @@ test("export-all returns every table for the tenant only; delete-all empties it"
   assert.equal(self.rows[0].n, 1);
 });
 
-test("plan limits: daily call limit is enforced with a plain message", async () => {
-  // free plan overridden to 40 calls/day in this test server
+test("plan limits: there is no per-day call cap, calls are only metered", async () => {
   let last: any;
-  for (let i = 0; i < 45; i++) {
-    last = await tool(bobMe.mcp_url, (await bobToken()).access_token, "list_flags", {});
-    if (last.isError) break;
-  }
-  assert.equal(last.isError, true);
-  assert.match(last.text, /Daily limit reached/);
+  for (let i = 0; i < 60; i++) last = await tool(bobMe.mcp_url, (await bobToken()).access_token, "list_flags", {});
+  assert.equal(last.isError, false);
+  assert.ok((await api(s, bob)("/api/me")).body.usage.calls_today >= 60);
 });
 
 let _bobTok: any;

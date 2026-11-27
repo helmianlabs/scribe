@@ -12,7 +12,7 @@ provisioning itself (roles, migration chain, verification) is
 AI clients (Claude.ai, Gemini, Mistral, Grok…)
         │  https
         ▼
-connect.helmian.cloud ──► reverse proxy (Caddy) — TLS terminates here
+scribemem.helmian.cloud ──► reverse proxy (Caddy) — TLS terminates here
         │  http, loopback only
         ▼
 helmian-scribe-saas container ── 127.0.0.1:8099 ──► app :8080
@@ -25,11 +25,13 @@ Postgres 16 (Neon hosted, or the compose database on the same host)
   driven by `docker-compose.saas.yml` at the repo root). It carries the built
   app, the provisioning script, and the migration files — nothing else is
   needed on the host besides Docker and the proxy.
-- **The hostname is `connect.helmian.cloud`** — reserved for this service in
-  the production design. Client-side checkers validate MCP hostnames, and the
+- **The hostname is `scribemem.helmian.cloud`** (the hosted service's own name;
+  `connect.helmian.cloud` was the older combined door address and is not used
+  for this service). The DNS record and the proxy block for it are set up on
+  the host, not by this repo. Client-side checkers validate MCP hostnames, and the
   OAuth issuer must sit at the host root (RFC 9728/8414 metadata), so the MCP
   endpoint does not move to a path on the marketing domain.
-- **Our own stack runs Caddy on the host**, proxying `connect.helmian.cloud`
+- **Run Caddy on the host**, proxying `scribemem.helmian.cloud`
   to `127.0.0.1:8099`. The compose file binds the app to loopback for exactly
   this. A fresh host without a proxy can use the bundled one instead:
   `docker compose -f docker-compose.saas.yml --profile proxy up -d`
@@ -100,14 +102,16 @@ ones:
 |---|---|
 | `SCRIBE_MODE=saas` | Selects the hosted server (`MEMORY_MODE` also works) |
 | `NODE_ENV` / `DEPLOY_ENV` | `production` in either turns on production boot validation |
-| `PUBLIC_URL` | Exact public https origin, e.g. `https://connect.helmian.cloud` — issuer, resource URLs, cookie flags, Stripe redirects all derive from it |
+| `PUBLIC_URL` | Exact public https origin, e.g. `https://scribemem.helmian.cloud` — issuer, resource URLs, cookie flags, Stripe redirects all derive from it |
 | `DATABASE_URL` | Connection **as `memory_app`** (never the owner) |
 | `DATABASE_SSL` | On by default; `disable` only for a TLS-less local Postgres |
 | `PROVISION_DATABASE_URL` | Owner connection, used only by the entrypoint/provisioning |
 | `MEMORY_APP_PASSWORD` | Must match the password inside `DATABASE_URL` (used when provisioning creates the role) |
 | `PROVISION_ON_BOOT` | `apply` or `check-only` (default) — see the entrypoint table |
 | `RESEND_API_KEY`, `MAIL_FROM` | Real sign-in email; both required in production |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TEAM` | Billing; all-or-nothing. Test keys until the separate live-billing decision |
+| `PAYMENT_PROVIDER` | `stripe` (default) or `paddle`; a mistyped value refuses to boot |
+| `PADDLE_API_KEY`, `PADDLE_WEBHOOK_SECRET`, `PADDLE_CLIENT_TOKEN`, `PADDLE_PRICE_PERSONAL`, `PADDLE_PRICE_PERSONAL_YEARLY`, `PADDLE_PRICE_TEAM` | Paddle billing; all-or-nothing, sandbox until the live decision. See [PADDLE-GO-LIVE.md](PADDLE-GO-LIVE.md) |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PERSONAL`, `STRIPE_PRICE_PERSONAL_YEARLY`, `STRIPE_PRICE_TEAM` | Billing; all-or-nothing. Test keys until the separate live-billing decision |
 | `MIGRATIONS_DIR` | Set by the image (`/migrations`); override only outside the image |
 
 ## First boot (fresh host)

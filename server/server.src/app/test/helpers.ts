@@ -28,13 +28,14 @@ export async function freshDb(opts: { saas?: boolean } = {}) {
   await pg.exec(sql("006_courier.sql"));
   await pg.exec(sql("008_graph.sql"));
   if (opts.saas !== false) await pg.exec(sql("007_stripe_events_status.sql"));
+  if (opts.saas !== false) { await pg.exec(sql("009_plans_personal.sql")); await pg.exec(sql("010_paddle_seats.sql")); }
   return pg;
 }
 
 export async function startSaas(over: Partial<SaasConfig> = {}, deps: Record<string, unknown> = {}) {
   const pg = await freshDb();
   const db = pgliteDb(pg, "memory_app"); // non-superuser: row-level security really applies
-  const cfg = loadSaasConfig({ publicUrl: "http://127.0.0.1:0", databaseUrl: "pglite", mail: { provider: "dev", from: null, outboxFile: "/tmp/smm-test-outbox.jsonl" }, stripe: { secretKey: null, webhookSecret: "whsec_test_local_secret_123456789", prices: { pro: "price_pro_test", team: "price_team_test" }, allowLive: false }, ...over });
+  const cfg = loadSaasConfig({ publicUrl: "http://127.0.0.1:0", databaseUrl: "pglite", mail: { provider: "dev", from: null, outboxFile: "/tmp/smm-test-outbox.jsonl" }, stripe: { secretKey: null, webhookSecret: "whsec_test_local_secret_123456789", prices: { personal: "price_personal_test", personalYearly: "price_personal_yearly_test", team: "price_team_test" }, allowLive: false }, ...over });
   // bind first to learn the port, then fix publicUrl (issuer/resource URLs must be exact)
   const { createServer } = await import("node:http");
   const srv = createServer();
@@ -56,6 +57,12 @@ export async function signIn(s: Saas, email: string): Promise<string> {
   const v = await fetch(`${s.base}/auth/verify`, { method: "POST", redirect: "manual", headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: s.base }, body: new URLSearchParams({ token }) });
   if (v.status !== 303) throw new Error(`verify ${v.status}`);
   return v.headers.get("set-cookie")!.split(";")[0];
+}
+
+/** Put a signed-in account's tenant on a plan (the Stripe webhook does this in production). */
+export async function upgrade(s: Saas, cookie: string, plan: "free" | "personal" | "team" = "personal"): Promise<void> {
+  const me = await (await fetch(`${s.base}/api/me`, { headers: { Cookie: cookie } })).json() as any;
+  await s.pg.query("UPDATE tenants SET plan = $1 WHERE id = $2", [plan, me.tenant.id]);
 }
 
 export const api = (s: Saas, cookie: string) => async (path: string, init: RequestInit = {}) => {

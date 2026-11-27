@@ -103,8 +103,10 @@ Good to know:
   redaction as every other save: API keys, passwords and card numbers are
   removed before anything is stored, and anything caught is listed under
   Flags on your dashboard.
+- **Plan:** importing ChatGPT and Claude history is part of the Personal
+  plan. On Free the upload is refused with a note to upgrade.
 - **Limits:** one file up to **50 MB** and **2,000 conversations** per
-  import. If your plan's storage fills up mid-import, the import stops
+  import. If your plan's memory or storage limit is reached mid-import, the import stops
   safely with everything so far kept — upgrade, then upload the same file
   again to finish.
 - **It's private.** An import lands in *your* vault only — the file itself

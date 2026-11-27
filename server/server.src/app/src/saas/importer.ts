@@ -293,7 +293,7 @@ export async function importHistory(
           const saved = await saveMemory(q, tenant.id, plan, { content: prep.text, source: parsed.sourceTag, category, tags: ["import", parsed.format] });
           redactions += prep.redactions;
           try {
-            await new TenantLibrarian(q, tenant.id).fileSaved({ id: saved.message_id, text: saved.text, sender: parsed.sourceTag, source: parsed.sourceTag, conversationName: saved.conversation_name });
+            await new TenantLibrarian(q, tenant.id, {}, plan).fileSaved({ id: saved.message_id, text: saved.text, sender: parsed.sourceTag, source: parsed.sourceTag, conversationName: saved.conversation_name });
           } catch { /* filing is best-effort, exactly as in save_memory's error shape */ }
           await recordFlags(q, tenant.id, findingsToFlags(prep.findings, { source_ai: parsed.sourceTag, reporter: "server", message_id: saved.message_id }), alertTarget);
           savedAny = true;
@@ -306,7 +306,7 @@ export async function importHistory(
     } catch (e) {
       if (e instanceof LimitError) {
         report.failed.push({ title: conv.title, error: e.message });
-        report.note = "Import stopped: your plan's storage limit was reached. Everything listed as imported is safely in your vault; upgrade and re-upload the same file to continue — already-imported conversations are skipped, not duplicated.";
+        report.note = "Import stopped: your plan's memory or storage limit was reached. Everything listed as imported is safely in your vault; upgrade and re-upload the same file to continue — already-imported conversations are skipped, not duplicated.";
         break;
       }
       report.failed.push({ title: conv.title, error: e instanceof Error ? e.message : String(e) });

@@ -11,7 +11,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { deflateRawSync } from "node:zlib";
-import { startSaas, signIn, api, connect, tool, type Saas } from "./helpers.ts";
+import { startSaas, signIn, upgrade, api, connect, tool, type Saas } from "./helpers.ts";
 import { crc32 } from "../src/saas/zip.ts";
 
 let s: Saas;
@@ -142,6 +142,7 @@ async function mcpFor(cookie: string) {
 // ------------------------------------------------------------ tests
 test("Claude export imports end to end and is searchable + readable", async () => {
   const alice = await signIn(s, "imp-alice@example.com");
+  await upgrade(s, alice);
   const up = await upload(alice, claudeZip());
   assert.equal(up.status, 200, JSON.stringify(up.body));
   assert.equal(up.body.format, "claude");
@@ -171,6 +172,7 @@ test("Claude export imports end to end and is searchable + readable", async () =
 
 test("re-uploading the same export imports nothing twice", async () => {
   const alice = await signIn(s, "imp-alice2@example.com");
+  await upgrade(s, alice);
   const first = await upload(alice, claudeZip());
   assert.equal(first.body.imported, 2);
   const meBefore = (await api(s, alice)("/api/me")).body;
@@ -185,6 +187,7 @@ test("re-uploading the same export imports nothing twice", async () => {
 
 test("ChatGPT export imports the live thread only (abandoned branch excluded)", async () => {
   const carol = await signIn(s, "imp-carol@example.com");
+  await upgrade(s, carol);
   const up = await upload(carol, chatgptZip());
   assert.equal(up.status, 200, JSON.stringify(up.body));
   assert.equal(up.body.format, "chatgpt");
@@ -207,6 +210,7 @@ test("ChatGPT export imports the live thread only (abandoned branch excluded)", 
 
 test("imports are invisible across tenants in search and read", async () => {
   const dave = await signIn(s, "imp-dave@example.com");
+  await upgrade(s, dave);
   const upDave = await upload(dave, claudeZip());
   assert.equal(upDave.body.imported, 2);
   const daveMcp = await mcpFor(dave);
@@ -214,6 +218,7 @@ test("imports are invisible across tenants in search and read", async () => {
   const daveId = daveFound.data.results[0].message_id;
 
   const erin = await signIn(s, "imp-erin@example.com");
+  await upgrade(s, erin);
   const erinMcp = await mcpFor(erin);
   const erinSearch = await tool(erinMcp.url, erinMcp.token, "search_memory", { query: "CLAUDE-MARKER-HUMAN" });
   assert.equal(erinSearch.data.total, 0, "Erin cannot search Dave's import");
@@ -230,6 +235,7 @@ test("imports are invisible across tenants in search and read", async () => {
 
 test("malformed uploads are rejected and import nothing", async () => {
   const frank = await signIn(s, "imp-frank@example.com");
+  await upgrade(s, frank);
 
   const notZip = await upload(frank, Buffer.from("this is not a zip file at all, just text"));
   assert.equal(notZip.status, 400);

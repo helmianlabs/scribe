@@ -13,22 +13,23 @@ import type { SaasConfig } from "./config.js";
 import { makeMailer, type Mailer } from "./mailer.js";
 import { Accounts, safeReturnTo, type Tenant, type User } from "./accounts.js";
 import { SaasOAuth, SCOPES } from "./oauth.js";
-import { Billing, BillingError } from "./billing.js";
+import { Billing, BillingError, parseSeats, type BillingProvider } from "./billing.js";
+import { PaddleBilling, type PaddleFetch } from "./paddle.js";
 import { ApiKeys, type ApiKeyAuth } from "./apikeys.js";
-import { planFor, LimitError, PLANS, type PlanId } from "./plans.js";
+import { planFor, LimitError, PLANS, TEAM_MAX_SEATS, type PlanId } from "./plans.js";
 import { buildTenantMcpServer, alertTargetFor } from "./mcp.js";
-import { countCall, usage, exportAll, deleteAll } from "./memory.js";
+import { countCall, usage, exportAll, deleteAll, secondsToUtcMidnight } from "./memory.js";
 import { importHistory, ImportError, MAX_ZIP_BYTES } from "./importer.js";
 import { courierMailboxStatus, unreadSummary, PostOfficeError } from "../courier/store.js";
 import { MAILBOXES, canonicalMailbox } from "../courier/mailboxes.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
-import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, DASHBOARD_JS } from "./pages.js";
+import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS } from "./pages.js";
 
 const COOKIE = "smm_session";
 
-export interface SaasDeps { db: Db; cfg: SaasConfig; mailer?: Mailer; stripe?: Stripe; }
+export interface SaasDeps { db: Db; cfg: SaasConfig; mailer?: Mailer; stripe?: Stripe; paddleFetch?: PaddleFetch; }
 
 function cookies(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
@@ -59,11 +60,14 @@ export function createSaasApp(deps: SaasDeps) {
   const accounts = new Accounts(db, cfg, mailer);
   const oauth = new SaasOAuth(db, cfg.publicUrl);
   const billing = new Billing(db, cfg, accounts, deps.stripe);
+  const paddle = new PaddleBilling(db, cfg, accounts, deps.paddleFetch);
+  /** The provider checkout, the portal and seat changes go through (PAYMENT_PROVIDER). */
+  const payments: BillingProvider = cfg.paymentProvider === "paddle" ? paddle : billing;
   const keys = new ApiKeys(db);
   const origin = new URL(cfg.publicUrl).origin;
   const genericResource = new URL(`${cfg.publicUrl}/mcp`);
   const mcpUrlFor = (t: Tenant) => `${cfg.publicUrl}/t/${t.slug}/mcp`;
-  const planOf = (t: Tenant) => planFor(t.plan, cfg.limitsOverride as never);
+  const planOf = (t: Tenant) => planFor(t.plan, cfg.limitsOverride as never, t.seats);
 
   const app = express();
   app.disable("x-powered-by");
@@ -89,6 +93,17 @@ export function createSaasApp(deps: SaasDeps) {
     }
   });
 
+  // ---------------------------------------------------------------- Paddle webhook (raw body, before JSON parsing)
+  app.post("/webhooks/paddle", express.raw({ type: "*/*", limit: "1mb" }), async (req, res) => {
+    try {
+      const out = await paddle.handleWebhook(req.body as Buffer, req.header("paddle-signature") ?? undefined);
+      res.status(out.status).json(out.body);
+    } catch (e) {
+      console.error("paddle webhook error:", (e as Error).message);
+      res.status(500).json({ error: "Webhook processing failed." });
+    }
+  });
+
   // ---------------------------------------------------------------- helpers
   const setSession = (res: Response, token: string) =>
     res.append("Set-Cookie", `${COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${cfg.sessionTtlDays * 86400}${cfg.cookieSecure ? "; Secure" : ""}`);
@@ -98,6 +113,7 @@ export function createSaasApp(deps: SaasDeps) {
   const html = (res: Response, status: number, body: string) => res.status(status).set("Content-Type", "text/html; charset=utf-8").send(body);
   const wrap = (fn: (req: Request, res: Response) => Promise<unknown>) => (req: Request, res: Response) => {
     fn(req, res).catch((e) => {
+      if (e instanceof LimitError && e.kind === "calls") { res.set("Retry-After", String(secondsToUtcMidnight())).status(429).json({ error: e.message, limit: e.kind }); return; }
       if (e instanceof LimitError) { res.status(402).json({ error: e.message, limit: e.kind }); return; }
       if (e instanceof BillingError) { res.status(e.status).json({ error: e.message }); return; }
       console.error("request error:", (e as Error).message);
@@ -131,6 +147,14 @@ export function createSaasApp(deps: SaasDeps) {
   app.get("/getting-started", (_req, res) => html(res, 200, gettingStartedPage()));
   app.get("/static/dashboard.js", (_req, res) => res.set("Content-Type", "text/javascript; charset=utf-8").send(DASHBOARD_JS));
   app.get("/billing/mock", (_req, res) => html(res, 200, mockBillingPage()));
+  // Paddle's checkout payment links point here (the account's default payment link). The page loads Paddle.js, which opens
+  // the checkout for the ?_ptxn transaction. It is the only page allowed to load script and frames from paddle.com.
+  app.get("/billing/pay", (_req, res) => {
+    if (cfg.paymentProvider !== "paddle" || !cfg.paddle.clientToken) { html(res, 404, messagePage("Checkout is not available", "This server is not set up for checkout. Go back to your dashboard.")); return; }
+    res.set("Content-Security-Policy", PADDLE_PAY_CSP);
+    html(res, 200, paddlePayPage({ token: cfg.paddle.clientToken, environment: cfg.paddle.clientToken.startsWith("live_") ? "production" : "sandbox" }));
+  });
+  app.get("/static/paddle-pay.js", (_req, res) => res.set("Content-Type", "text/javascript; charset=utf-8").send(PADDLE_PAY_JS));
 
   // ---------------------------------------------------------------- OAuth (AS) + consent by signed-in account
   // Custom discovery documents (registered BEFORE the SDK router below so
@@ -380,18 +404,23 @@ export function createSaasApp(deps: SaasDeps) {
     const c = await caller(req, res); if (!c) return;
     const plan = planOf(c.tenant);
     const u = await db.tenant(c.tenant.id, (q) => usage(q, c.tenant.id));
-    const { stripe_customer_id: _a, stripe_subscription_id: _b, ...tenant } = c.tenant;
-    res.json({ user: c.user, tenant, role: c.role, plan, plans: PLANS, usage: u, mcp_url: mcpUrlFor(c.tenant), billing_mode: billing.mode });
+    const { stripe_customer_id: _a, stripe_subscription_id: _b, paddle_customer_id: _c, paddle_subscription_id: _d, paddle_event_at: _e, ...tenant } = c.tenant;
+    res.json({ user: c.user, tenant, role: c.role, plan, plans: PLANS, usage: u, mcp_url: mcpUrlFor(c.tenant), billing_mode: payments.mode, payment_provider: payments.name, max_seats: TEAM_MAX_SEATS });
   }));
 
   api.post("/billing/checkout", wrap(async (req, res) => {
     const c = await caller(req, res, { ownerOnly: true }); if (!c) return;
     const plan = String(req.body?.plan || "") as PlanId;
-    res.json(await billing.checkout(c.tenant, plan, c.user!.email));
+    const interval = req.body?.interval === "year" ? "year" : "month";
+    res.json(await payments.checkout(c.tenant, plan, c.user!.email, interval, parseSeats(plan, req.body?.seats)));
+  }));
+  api.post("/billing/seats", wrap(async (req, res) => {
+    const c = await caller(req, res, { ownerOnly: true }); if (!c) return;
+    res.json(await payments.setSeats(c.tenant, parseSeats("team", req.body?.seats)));
   }));
   api.post("/billing/portal", wrap(async (req, res) => {
     const c = await caller(req, res, { ownerOnly: true }); if (!c) return;
-    res.json(await billing.portal(c.tenant));
+    res.json(await payments.portal(c.tenant));
   }));
 
   api.get("/export", wrap(async (req, res) => {
@@ -431,7 +460,7 @@ export function createSaasApp(deps: SaasDeps) {
   }));
 
   // ------------------------------ Flags API (see docs/FLAGS_API.md)
-  const meter = (c: Caller) => db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, planOf(c.tenant)));
+  const meter = (c: Caller) => db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, "call", planOf(c.tenant)));
   api.get("/flags", wrap(async (req, res) => {
     const c = await caller(req, res, { allowKeyScope: "flags.read" }); if (!c) return;
     if (c.key) await meter(c);
@@ -481,7 +510,10 @@ export function createSaasApp(deps: SaasDeps) {
     if (!Buffer.isBuffer(body) || body.length === 0) {
       res.status(400).json({ error: "Upload your Claude or ChatGPT export .zip as the request body." }); return;
     }
-    await db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, planOf(c.tenant)));
+    if (!planOf(c.tenant).features.importHistory) {
+      res.status(402).json({ error: "Importing your Claude or ChatGPT history is part of the Personal plan. Upgrade on your dashboard.", limit: "feature" }); return;
+    }
+    await db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, "call", planOf(c.tenant)));
     try {
       const out = await importHistory(db, c.tenant, planOf(c.tenant), body, alertTargetFor(c.tenant, cfg.publicUrl));
       res.json(out);

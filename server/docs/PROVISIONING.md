@@ -54,13 +54,14 @@ The script:
 3. Applies the migration chain in order, recording each file's SHA-256 in a
    `schema_migrations` ledger table:
    `000_base` → `001_librarian` → `003_search_index` → `004_flags` →
-   `005_saas` → `006_courier` → `007_stripe_events_status`.
+   `005_saas` → `006_courier` → `007_stripe_events_status` →
+   `009_plans_personal` → `010_paddle_seats`.
    A ledger entry whose hash no longer matches the file on disk is **drift**:
    the script stops. Re-running is safe — applied migrations are skipped and
    every migration is idempotent.
-4. Verifies the result and exits non-zero listing every problem: all 24
+4. Verifies the result and exits non-zero listing every problem: all 26
    tables and 3 views present, RLS enabled + forced with a `tenant_isolation`
-   policy on the 12 data-plane tables, `memory_app` grants, the seeded
+   policy on the 13 data-plane tables, `memory_app` grants, the seeded
    `self` tenant, and the `pg_trgm` search index.
 
 `002_fix_ro_role.sql` is **not** in the chain: it is a one-off security fix
