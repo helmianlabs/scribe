@@ -14,16 +14,68 @@ export function layout(title: string, body: string, scripts: string[] = []): str
 <title>${esc(title)}</title><style>${CSS}</style></head><body><main>${body}</main>${scripts.map((s) => `<script src="${esc(s)}"></script>`).join("")}</body></html>`;
 }
 
-export function signInPage(opts: { returnTo?: string | null; error?: string; sent?: string }): string {
+export function signInPage(opts: { returnTo?: string | null; error?: string; sent?: string; emailSignIn?: boolean }): string {
   if (opts.sent) {
     return layout("Check your email", `<div class="card"><h1>Check your email</h1><p class="sub">We sent a sign-in link to <b>${esc(opts.sent)}</b>. It works once and expires soon. You can close this tab after you click it.</p></div>`);
   }
-  return layout("Sign in", `<div class="card"><h1>Sign in to Helmian Scribe</h1>
-<p class="sub">One memory every AI you use (Claude, ChatGPT, Grok, Gemini, your coding tools) can read and write. Enter your email and we'll send you a sign-in link. New here? The same link creates your account.</p>
+  const emailOn = opts.emailSignIn !== false;
+  const emailBlock = emailOn ? `
+<p class="sub">Or enter your email and we'll send a sign-in link. New here? The same link creates your account.</p>
 ${opts.error ? `<p class="err">${esc(opts.error)}</p>` : ""}
 <form method="POST" action="/auth/start"><input type="hidden" name="return_to" value="${esc(opts.returnTo ?? "")}">
-<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required autofocus>
-<button type="submit">Email me a sign-in link</button></form></div>`);
+<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="email" required>
+<button type="submit">Email me a sign-in link</button></form>` : `
+<p class="sub">Email sign-in is not on yet. You can still try Scribe Memory without an account.</p>
+${opts.error ? `<p class="err">${esc(opts.error)}</p>` : ""}`;
+  return layout("Sign in", `<div class="card"><h1>Scribe Memory</h1>
+<p class="sub">One memory every AI you use (Claude, ChatGPT and Cursor) can read and write. Start without an account — it takes a few seconds.</p>
+<form method="POST" action="/try"><button type="submit">Try without signing up</button></form>
+<p class="muted">This creates a private memory for you, walled off from everyone else.</p>
+${emailBlock}</div>`);
+}
+
+export interface InstallCommands {
+  mcp_url: string;
+  one_line: string;
+  cursor_json: string;
+  claude: string;
+  chatgpt: string;
+}
+
+export function installCommands(mcpUrl: string, token?: string): InstallCommands {
+  const header = token ? ` --header "Authorization: Bearer ${token}"` : "";
+  const one = `claude mcp add --transport http scribe-memory ${mcpUrl}${header}`;
+  const cursor = token
+    ? JSON.stringify({ mcpServers: { "scribe-memory": { url: mcpUrl, headers: { Authorization: `Bearer ${token}` } } } }, null, 2)
+    : JSON.stringify({ mcpServers: { "scribe-memory": { url: mcpUrl } } }, null, 2);
+  const claude = `Claude: Settings → Connectors → Add custom connector. Paste this address:\n${mcpUrl}\nApprove when Claude opens the consent page.`;
+  const chatgpt = `ChatGPT: Settings → Connectors → Create. Paste this address:\n${mcpUrl}\nApprove when ChatGPT opens the consent page.`;
+  return { mcp_url: mcpUrl, one_line: one, cursor_json: cursor, claude, chatgpt };
+}
+
+export function tryPage(): string {
+  return layout("Try Scribe Memory", `<div class="card"><h1>Try Scribe Memory</h1>
+<p class="sub">No email, no password. We'll create a private memory for you and show the one-line install for Claude, ChatGPT and Cursor.</p>
+<form method="POST" action="/try"><button type="submit">Create my memory</button></form>
+<p class="muted">Free tier: 1,000 memories, 500 calls a day. You can sign in with email later once that's turned on, to keep this memory.</p></div>`);
+}
+
+export function tryReadyPage(o: { mcpUrl: string; token: string; expiresIn: number; install: InstallCommands }): string {
+  const days = Math.round(o.expiresIn / 86400);
+  return layout("Your Scribe Memory is ready", `<div class="card"><h1>Your memory is ready</h1>
+<p class="sub">This address is yours alone. Copy the one-line command, or paste the address into Claude, ChatGPT or Cursor.</p>
+<p><b>Memory address</b></p>
+<p><code>${esc(o.mcpUrl)}</code></p>
+<p><b>One-line install (Claude Code)</b></p>
+<p><code>${esc(o.install.one_line)}</code></p>
+<p><b>Cursor</b> — add this to your MCP config (<code>~/.cursor/mcp.json</code>):</p>
+<pre class="mono" style="white-space:pre-wrap;padding:12px;display:block">${esc(o.install.cursor_json)}</pre>
+<p class="muted">${esc(o.install.claude)}</p>
+<p class="muted">${esc(o.install.chatgpt)}</p>
+<p class="muted">The access token is shown only this once and lasts ${days} days. After that, or in apps that use a browser consent screen, open <a href="/dashboard" style="color:#93c5fd">your dashboard</a> and approve the connection.</p>
+<p class="err">Treat the token like a password. Anyone with it can read and write this memory.</p>
+<p><a href="/dashboard" style="color:#93c5fd">Open the dashboard</a></p>
+</div>`);
 }
 
 export function verifyPage(token: string): string {

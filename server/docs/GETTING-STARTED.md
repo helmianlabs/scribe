@@ -3,6 +3,19 @@
 **You are three short steps from one memory that every AI you use can read —
 including the conversations you have already had.**
 
+The fastest path, with no account: open
+[https://scribemem.helmian.cloud/try](https://scribemem.helmian.cloud/try)
+and press **Create my memory**. Copy the one-line install, or paste the memory
+address into Claude, ChatGPT or Cursor as a custom connector. Then skip to
+Step 3 if you want to import old chats (import is part of the Personal plan).
+
+Or, from a terminal:
+
+```bash
+curl -sS -X POST https://scribemem.helmian.cloud/try -H 'Accept: application/json'
+```
+
+
 Scribe is a memory vault for your AIs. Claude, ChatGPT, Grok, Gemini and your
 coding tools all connect to the same address, so a chat you had with one of
 them can be found by any of the others. Nothing here needs a terminal, a
@@ -44,7 +57,7 @@ or delete everything at any time from your dashboard.
 
 1. Sign in and open your **dashboard**. The first card shows your **memory
    address** — a link that looks like
-   `https://scribe.example.com/t/your-name/mcp`.
+   `https://scribemem.helmian.cloud/t/your-name/mcp`.
 2. In your AI app, add a **custom connector** and paste that address:
    - **Claude:** Settings → Connectors → *Add custom connector*
    - **ChatGPT:** Settings → Connectors → *Create*

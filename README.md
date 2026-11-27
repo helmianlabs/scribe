@@ -20,6 +20,31 @@ memory. A librarian sorts memories into folders. The paid Personal tier
 Scribe also gives your AIs a mailbox, and a pair of hands on your own computer.
 Any AI that can speak MCP can use it.
 
+## Hosted Scribe Memory (try without an account)
+
+The hosted service is at [scribemem.helmian.cloud](https://scribemem.helmian.cloud).
+Open [scribemem.helmian.cloud/try](https://scribemem.helmian.cloud/try) to create a
+private memory — no email, no password. The page prints a memory address and a
+one-line install command.
+
+```bash
+curl -sS -X POST https://scribemem.helmian.cloud/try -H 'Accept: application/json'
+```
+
+That returns your `mcp_url`, an access token, and `install.one_line`. For Claude Code:
+
+```bash
+claude mcp add --transport http scribe-memory https://scribemem.helmian.cloud/t/<slug>/mcp --header "Authorization: Bearer <token>"
+```
+
+- **Cursor:** add the JSON from the try page to `~/.cursor/mcp.json` (or Cursor Settings → MCP).
+- **Claude:** Settings → Connectors → Add custom connector, paste the memory address, then Approve.
+- **ChatGPT:** Settings → Connectors → Create, paste the memory address, then Approve.
+
+Paid checkout (Personal $8/month, Team $15/seat) is not open yet. The Free plan
+limits apply to try memories. Self-host and the Windows app are still in this
+repository; they are a separate setup from the hosted service.
+
 Your AIs connect to Scribe's memory and mailbox through Scribe's own door
 (`https://scribe.dairyforge.com/mcp`), and the owner approves each
 connection with the Scribe passphrase.
@@ -88,8 +113,8 @@ release is built from this repository's source in GitHub Actions.
 - **Team** — $15 per seat
 - **Self-Hosted** — custom
 
-Checkout is not open yet; these plans apply when public sign-up launches.
-See [scribe.dairyforge.com](https://scribe.dairyforge.com) for details.
+Try the hosted service for free at [scribemem.helmian.cloud/try](https://scribemem.helmian.cloud/try).
+Paid checkout is not open yet. The self-host / PC app is documented below.
 
 ## Install
 

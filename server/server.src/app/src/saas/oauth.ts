@@ -16,10 +16,12 @@ import type { Db } from "./db.js";
 import { sha256, randomToken, newId } from "./crypto.js";
 
 export const ACCESS_TTL = 60 * 60;            // 1 hour
+export const TRY_TOKEN_TTL = 60 * 60 * 24 * 30; // 30 days, first-party try-path token
 export const REFRESH_TTL = 60 * 60 * 24 * 30;   // 30 days
 export const CODE_TTL = 10 * 60;
 export const PENDING_TTL = 30 * 60;           // time to finish the email sign-in on the consent page
 export const SCOPES = ["memory.read", "memory.write"];
+export const TRY_CLIENT_ID = "scribe-try";
 
 /** Extract the tenant slug from a resource URL like https://host/t/<slug>/mcp */
 export function slugFromResource(resource: string | undefined, publicUrl: string): string | null {
@@ -124,15 +126,23 @@ export class SaasOAuth implements OAuthServerProvider {
     return this.mint(client.client_id, c.tenant_id, c.user_id, c.scopes, res);
   }
 
-  private async mint(clientId: string, tenantId: string, userId: string, scopes: string[], resource: string | null): Promise<OAuthTokens> {
+  private async mint(clientId: string, tenantId: string, userId: string, scopes: string[], resource: string | null, accessTtl = ACCESS_TTL): Promise<OAuthTokens> {
     const access = randomToken(32);
     const refresh = randomToken(32);
     await this.db.control.query(
       `INSERT INTO oauth_tokens (token_hash, kind, client_id, tenant_id, user_id, scopes, resource, expires_at)
        VALUES ($1,'access',$2,$3,$4,$5,$6, now() + make_interval(secs => $7)),
               ($8,'refresh',$2,$3,$4,$5,$6, now() + make_interval(secs => $9))`,
-      [sha256(access), clientId, tenantId, userId, scopes, resource, ACCESS_TTL, sha256(refresh), REFRESH_TTL]);
-    return { access_token: access, token_type: "Bearer", expires_in: ACCESS_TTL, refresh_token: refresh, scope: scopes.join(" ") };
+      [sha256(access), clientId, tenantId, userId, scopes, resource, accessTtl, sha256(refresh), REFRESH_TTL]);
+    return { access_token: access, token_type: "Bearer", expires_in: accessTtl, refresh_token: refresh, scope: scopes.join(" ") };
+  }
+
+  /** First-party token for the no-signup try path. Hashed in oauth_tokens like any other access token. */
+  async mintFirstParty(tenantId: string, userId: string, resource: string): Promise<OAuthTokens> {
+    await this.db.control.query(
+      `INSERT INTO oauth_clients (client_id, client_json) VALUES ($1, $2::jsonb) ON CONFLICT (client_id) DO NOTHING`,
+      [TRY_CLIENT_ID, JSON.stringify({ client_id: TRY_CLIENT_ID, client_name: "Scribe Memory try", token_endpoint_auth_method: "none" })]);
+    return this.mint(TRY_CLIENT_ID, tenantId, userId, SCOPES, resource, TRY_TOKEN_TTL);
   }
 
   async exchangeRefreshToken(client: OAuthClientInformationFull, refreshToken: string, scopes?: string[], resource?: URL): Promise<OAuthTokens> {

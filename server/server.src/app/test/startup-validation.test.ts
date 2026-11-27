@@ -116,6 +116,18 @@ test("production posture accepts a fully configured production config", async ()
   });
 });
 
+test("production posture accepts mailer off (try path only) with a warning", async () => {
+  await withEnv({ NODE_ENV: "production", DEPLOY_ENV: null, PUBLIC_URL: "https://scribemem.helmian.cloud" }, async () => {
+    const db = pgliteDb(await provisionedDb(), "memory_app");
+    const report = await validateSaasStartup(cfg({
+      publicUrl: "https://scribemem.helmian.cloud",
+      mail: { provider: "off", from: null, outboxFile: "/tmp/x" },
+    }), db);
+    assert.equal(report.production, true);
+    assert.ok(report.warnings.some((w) => w.includes("Email sign-in is off")));
+  });
+});
+
 test("half-configured Stripe is refused in any posture; a live key without the live flag is refused", () => {
   const half = assessConfig(cfg({ stripe: { secretKey: "sk_test_x", webhookSecret: null, prices: { personal: "price_p", personalYearly: "price_y", team: null }, allowLive: false } }), false);
   assert.ok(half.problems.some((p) => p.includes("half-configured") && p.includes("STRIPE_WEBHOOK_SECRET") && p.includes("STRIPE_PRICE_TEAM")));

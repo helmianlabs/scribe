@@ -14,6 +14,9 @@ export function makeMailer(cfg: SaasConfig, fetchImpl: typeof fetch = fetch): Ma
   return {
     outbox,
     async send(m) {
+      if (cfg.mail.provider === "off") {
+        throw new Error("Email sign-in is not enabled. Use the try path at /try.");
+      }
       if (cfg.mail.provider === "resend") {
         const key = process.env.RESEND_API_KEY;
         if (!key || !cfg.mail.from) throw new Error("Email is not configured (RESEND_API_KEY and MAIL_FROM).");
