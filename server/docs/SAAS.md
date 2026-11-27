@@ -31,26 +31,37 @@ Nothing on this branch has been deployed or run against Sam's production databas
 1. Every query filters by `tenant_id` explicitly.
 2. `005_saas.sql` turns on `FORCE ROW LEVEL SECURITY` on every data table, with policy `tenant_id = current_setting('app.tenant_id', true)`. The app runs each tenant's work in a transaction that sets that value. No value set ⇒ no rows. The app role `memory_app` is `NOSUPERUSER NOBYPASSRLS`. Views are `security_invoker`. Tested: the app role can't read or insert another tenant's rows even with a query that forgets the filter.
 
-**Plans and limits** (`saas/plans.ts`)
+**Plans and limits** (`saas/plans.ts`, owner-approved 2026-11-26)
 
-| Plan | Memories | MCP/API calls per day | API keys | Members |
-|---|---|---|---|---|
-| free | 2,000 | 300 | 1 | 1 |
-| pro ($15/mo, placeholder) | 100,000 | 20,000 | 5 | 1 |
-| team ($49/mo, placeholder) | 1,000,000 | 100,000 | 25 | 10 |
+| | Free | Personal | Team |
+|---|---|---|---|
+| Price | $0 | $8/month or $80/year | $15 per seat per month |
+| Memories | 1,000 | unlimited | unlimited |
+| Storage (memory text) | 50 MB | 5 GB | 5 GB per account (placeholder) |
+| Typed rules (`add_rule`) | 3 | unlimited | unlimited |
+| MCP connectors, Librarian filing with why-trail, search/recall, export | yes | yes | yes |
+| Learning from your moves | no | yes | yes |
+| People / places / companies shelves | no | yes | yes |
+| Knowledge graph | no | yes (entitlement flag; see note) | yes |
+| ChatGPT / Claude history import | no | yes | yes |
+| Daily backups | no | yes (entitlement flag; see note) | yes |
+| API keys | 1 | 5 | 25 (placeholder) |
+| Members | 1 | 1 | 10 (placeholder) |
 
-Calls are metered per tenant per UTC day in `usage_daily`. Hitting a limit returns a plain-language tool error (MCP) or HTTP 402 (API). `PLAN_LIMITS_JSON` overrides limits per environment. Prices are Sam's call; the Stripe Price is the source of truth for money, `plans.ts` for limits.
+Only the Team price was specified. Team's storage, API-key and member numbers are placeholders, and seats are not enforced (there is no invite flow yet). The hosted server does not build the knowledge graph yet and the repo has no backup job, so "graph" and "daily backups" are entitlements recorded on the plan, not running features.
+
+Limits are enforced in `saas/memory.ts` (memory count, stored bytes via the per-tenant `tenant_storage` counter from migration 009, typed rules, learning and shelves), `saas/apikeys.ts` and `saas/app.ts` (import). Hitting a limit returns a plain-language tool error (MCP) or HTTP 402 with `limit: memories|bytes|rules|api_keys|feature` (API); search, read and export keep working. There is no per-day call cap any more: calls are only metered per tenant per UTC day in `usage_daily`. `PLAN_LIMITS_JSON` overrides `maxMemories`, `maxBytes` and `maxTypedRules` per plan per environment. The retired plan id `pro` reads as `personal`; migration 009 renames stored rows. The Stripe Price is the source of truth for money, `plans.ts` for limits.
 
 **Export and delete**
 - `GET /api/export` → one JSON file with every row of the tenant (memories, notebooks, filings, rules, flags, Courier messages, usage).
 - `POST /api/delete-all {"confirm":"DELETE"}` (owner only) → deletes memories, filings, moves, custom rules, flags and Courier messages. Keeps the account, billing, chosen rulebook and usage meter. Add `"revoke_connections": true` to also revoke every OAuth token.
 
 **Stripe (test mode only)** (`saas/billing.ts`)
-- `POST /api/billing/checkout {"plan":"pro"|"team"}` → Checkout Session (subscription) with `tenant_id` in `client_reference_id` and metadata; creates the Stripe customer on first use.
+- `POST /api/billing/checkout {"plan":"personal"|"team","interval":"month"|"year"}` (yearly is Personal only) → Checkout Session (subscription) with `tenant_id` in `client_reference_id` and metadata; creates the Stripe customer on first use.
 - `POST /api/billing/portal` → Customer Portal link.
 - `POST /webhooks/stripe` → raw body, verified with `STRIPE_WEBHOOK_SECRET`; handles `checkout.session.completed`, `customer.subscription.created|updated|deleted`; idempotent by event id (`stripe_events`). Without a secret it answers 503 and changes nothing.
 - Safety: a live key (`sk_live_`/`rk_live_`) is refused at startup, and live-mode events are refused, unless `STRIPE_ALLOW_LIVE=yes-i-mean-live`. With no key at all, checkout/portal return a clearly-labelled mock page.
-- `scripts/stripe-create-products.mjs`: dry run by default; `--apply` with a test key creates/reuses the Pro and Team products + monthly prices (by `lookup_key`) and prints the `STRIPE_PRICE_*` lines. Not run against any account.
+- `scripts/stripe-create-products.mjs`: dry run by default; `--apply` with a test key creates/reuses the Personal (monthly and yearly) and Team (monthly) prices (by `lookup_key`) and prints the `STRIPE_PRICE_*` lines. Not run against any account.
 
 **Flags** — see [FLAGS_API.md](FLAGS_API.md). **Helmian Courier** — see [COURIER.md](COURIER.md).
 
@@ -66,8 +77,9 @@ Calls are metered per tenant per UTC day in `usage_daily`. Hitting a limit retur
 | `005_saas.sql` | **SaaS database only** | control tables, `tenant_id` on every data table (existing rows → `self`), RLS, rebuilt views, grants for `memory_app`. Do not apply to Sam's `claude_memory`: with FORCE RLS the self-host server would see an empty archive. |
 | `006_courier.sql` | both modes | Helmian Courier tables; adds RLS when `tenants` exists |
 | `007_stripe_events_status.sql` | **SaaS database only** | `stripe_events` apply tracking (`apply_status`/`apply_error`/`applied_at`/`attempts`) so a webhook whose apply fails stays retryable instead of being swallowed as a duplicate |
+| `009_plans_personal.sql` | **SaaS database only** | plan id `pro` → `personal` (CHECK widened), `tenant_storage` byte counter with RLS (backfilled from existing messages), grants for `memory_app`. Down restores `pro` and drops the counter. (008 is the graph migration; it is not in the SaaS chain.) |
 
-Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007.
+Each has a `.down.sql`; all are idempotent. Order for a fresh SaaS database: base tables → 001 → 004 → 005 → 006 → 007 → 009.
 
 Moving Sam's archive into the hosted service later = export from `claude_memory`, import as tenant `self` (or a new tenant). Not built yet.
 
@@ -91,7 +103,7 @@ On machines without Docker bridge networking add `-f staging/docker-compose.host
 | `PUBLIC_URL` | yes | https origin; issuer + resource URLs derive from it |
 | `DATABASE_SSL=disable` | local only | default is SSL on |
 | `RESEND_API_KEY`, `MAIL_FROM` | for real email | otherwise dev outbox |
-| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TEAM` | for billing | test keys only |
+| `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRICE_PERSONAL`, `STRIPE_PRICE_PERSONAL_YEARLY`, `STRIPE_PRICE_TEAM` | for billing | test keys only |
 | `ALERT_WEBHOOK_SECRET` | for alert webhooks | HMAC signing secret |
 | `OPENAI_API_KEY` | optional | turns on moderation (redacted text only) |
 | `PLAN_LIMITS_JSON`, `SESSION_TTL_DAYS`, `MAGIC_LINK_TTL_MIN`, `FLAGS_SAFE_INSTALL_HOSTS` | optional | tuning |

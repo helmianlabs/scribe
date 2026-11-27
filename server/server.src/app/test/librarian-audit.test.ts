@@ -8,7 +8,7 @@ import { PGlite } from "@electric-sql/pglite";
 import { Librarian } from "../src/librarian-tools.ts";
 import { KnowledgeGraph } from "../src/librarian/index.ts";
 import { extractEntities } from "../src/librarian/extract.ts";
-import { BASE, freshDb, sql, startSaas, signIn, api, connect, tool, type Saas } from "./helpers.ts";
+import { BASE, freshDb, sql, startSaas, signIn, upgrade, api, connect, tool, type Saas } from "./helpers.ts";
 
 const pool = (db: PGlite, hook?: (sql: string) => void) => ({ query: async (q: string, p?: unknown[]) => { hook?.(q); return db.query(q, p as any[]); } }) as any;
 const msg = async (db: PGlite, text: string, sender = "claude.ai") =>
@@ -101,6 +101,7 @@ after(async () => { await s.close(); });
 
 test("SaaS: entity filing, full trail, shelf guard, rule + tray re-file, all through the MCP tools", async () => {
   const cookie = await signIn(s, "audit@example.com");
+  await upgrade(s, cookie); // people/places/companies shelves are a Personal feature
   const me = (await api(s, cookie)("/api/me")).body;
   const tok = await connect(s, cookie, me.mcp_url);
   const call = (name: string, args: Record<string, unknown>) => tool(me.mcp_url, tok.access_token, name, args);

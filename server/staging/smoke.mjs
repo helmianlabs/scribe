@@ -78,14 +78,14 @@ check(inbox.d.unread_total === 1, "check_inbox sees it");
 check((await call("mark_read", { agent_name: "muse", message_ids: [inbox.d.messages[0].id] })).d.marked === 1, "mark_read");
 
 console.log("5. billing");
-const co = await api("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "pro" }) });
+const co = await api("/api/billing/checkout", { method: "POST", body: JSON.stringify({ plan: "personal" }) });
 check(co.status === 200 && (co.body.mode === "mock" || /checkout\.stripe\.com/.test(co.body.url)), `checkout session (${co.body?.mode})`);
-const evt = JSON.stringify({ id: `evt_smoke_${Date.now()}`, object: "event", type: "checkout.session.completed", livemode: false, data: { object: { id: "cs_test_smoke", object: "checkout.session", client_reference_id: me.tenant.id, customer: "cus_smoke", subscription: "sub_smoke", metadata: { tenant_id: me.tenant.id, plan: "pro" } } } });
+const evt = JSON.stringify({ id: `evt_smoke_${Date.now()}`, object: "event", type: "checkout.session.completed", livemode: false, data: { object: { id: "cs_test_smoke", object: "checkout.session", client_reference_id: me.tenant.id, customer: "cus_smoke", subscription: "sub_smoke", metadata: { tenant_id: me.tenant.id, plan: "personal" } } } });
 const ts = Math.floor(Date.now() / 1000);
 const sig = `t=${ts},v1=${createHmac("sha256", WHSEC).update(`${ts}.${evt}`).digest("hex")}`;
 check((await fetch(`${BASE}/webhooks/stripe`, { method: "POST", headers: { "Content-Type": "application/json", "Stripe-Signature": "t=1,v1=00" }, body: evt })).status === 400, "unsigned webhook refused");
 check((await fetch(`${BASE}/webhooks/stripe`, { method: "POST", headers: { "Content-Type": "application/json", "Stripe-Signature": sig }, body: evt })).status === 200, "signed webhook accepted");
-check((await api("/api/me")).body.plan.id === "pro", "plan is now pro");
+check((await api("/api/me")).body.plan.id === "personal", "plan is now personal");
 
 console.log("6. export + delete-all");
 const ex = await api("/api/export");

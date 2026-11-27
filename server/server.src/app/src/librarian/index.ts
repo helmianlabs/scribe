@@ -9,3 +9,4 @@ export * from './categories.js';
 export * from './trail.js';
 export * from './repair.js';
 export * from './graph.js';
+export { ENTITY_RULE_IDS, ENTITY_SHELVES, withoutEntityShelves } from './entities.js';

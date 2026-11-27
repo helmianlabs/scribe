@@ -19,6 +19,7 @@ services:
       - ../migrations/005_saas.sql:/docker-entrypoint-initdb.d/50_005_saas.sql:ro
       - ../migrations/006_courier.sql:/docker-entrypoint-initdb.d/60_006_courier.sql:ro
       - ../migrations/007_stripe_events_status.sql:/docker-entrypoint-initdb.d/70_007_stripe_events_status.sql:ro
+      - ../migrations/009_plans_personal.sql:/docker-entrypoint-initdb.d/90_009_plans_personal.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U owner -d memory"]
       interval: 2s
@@ -43,11 +44,12 @@ services:
       MAIL_PROVIDER: dev
       MAIL_OUTBOX_FILE: /data/outbox.jsonl
       STRIPE_SECRET_KEY: ${STRIPE_TEST_SECRET_KEY:-}      # optional; must be sk_test_ (live keys are refused)
-      STRIPE_PRICE_PRO: ${STRIPE_TEST_PRICE_PRO:-price_staging_pro}
+      STRIPE_PRICE_PERSONAL: ${STRIPE_TEST_PRICE_PERSONAL:-price_staging_personal}
+      STRIPE_PRICE_PERSONAL_YEARLY: ${STRIPE_TEST_PRICE_PERSONAL_YEARLY:-price_staging_personal_yearly}
       STRIPE_PRICE_TEAM: ${STRIPE_TEST_PRICE_TEAM:-price_staging_team}
       STRIPE_WEBHOOK_SECRET: whsec_staging_local_only_0123456789
       ALERT_WEBHOOK_SECRET: staging-hook-secret
       ALERT_ALLOW_HTTP_WEBHOOK: "1"
       ALERT_EMAIL: "off"
-      PLAN_LIMITS_JSON: '{"free":{"callsPerDay":500}}'
+      PLAN_LIMITS_JSON: '{"free":{"maxMemories":1000}}'
     volumes: ["./.data:/data"]

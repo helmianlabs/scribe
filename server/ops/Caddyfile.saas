@@ -1,8 +1,8 @@
 # TLS front door for the SaaS deployment when Caddy runs as the compose
 # "proxy" profile service (docker-compose.saas.yml). Caddy obtains and renews
 # the certificate automatically; the hostname must resolve to this host.
-# Our own stack runs Caddy on the host instead — same block, with
+# Caddy can also run on the host instead — same block, with
 # `reverse_proxy 127.0.0.1:8099`. See docs/HOSTING.md.
-connect.helmian.cloud {
+scribemem.helmian.cloud {
 	reverse_proxy app:8080
 }

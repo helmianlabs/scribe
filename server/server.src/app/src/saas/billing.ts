@@ -17,6 +17,12 @@ import type { SaasConfig } from "./config.js";
 import type { Accounts, Tenant } from "./accounts.js";
 import { isPaidStatus, type PlanId } from "./plans.js";
 
+/** Stripe metadata written before the plan rename says "pro"; it means Personal. Anything unknown is no paid plan. */
+function paidPlanFromMetadata(v: unknown): PlanId | null {
+  if (v === "pro" || v === "personal") return "personal";
+  return v === "team" ? "team" : null;
+}
+
 export class BillingError extends Error { constructor(msg: string, public status = 400) { super(msg); } }
 
 export function assertTestKey(key: string, allowLive: boolean): void {
@@ -39,25 +45,31 @@ export class Billing {
     } else { this.stripe = null; this.mode = "mock"; }
   }
 
-  priceFor(plan: PlanId): string | null {
-    return plan === "pro" ? this.cfg.stripe.prices.pro : plan === "team" ? this.cfg.stripe.prices.team : null;
+  /** Personal has a monthly and a yearly Stripe price; Team has one (per seat). */
+  priceFor(plan: PlanId, interval: "month" | "year" = "month"): string | null {
+    const p = this.cfg.stripe.prices;
+    if (plan === "personal") return interval === "year" ? p.personalYearly : p.personal;
+    return plan === "team" ? p.team : null;
   }
 
   planForPrice(priceId: string | null | undefined): PlanId | null {
     if (!priceId) return null;
-    if (priceId === this.cfg.stripe.prices.pro) return "pro";
-    if (priceId === this.cfg.stripe.prices.team) return "team";
+    const p = this.cfg.stripe.prices;
+    if (priceId === p.personal || priceId === p.personalYearly) return "personal";
+    if (priceId === p.team) return "team";
     return null;
   }
 
-  async checkout(tenant: Tenant, plan: PlanId, email: string): Promise<{ url: string; mode: string; id?: string }> {
-    if (plan !== "pro" && plan !== "team") throw new BillingError("Choose the pro or team plan.");
+  async checkout(tenant: Tenant, plan: PlanId, email: string, interval: "month" | "year" = "month"): Promise<{ url: string; mode: string; id?: string }> {
+    if (plan !== "personal" && plan !== "team") throw new BillingError("Choose the personal or team plan.");
+    if (interval !== "month" && interval !== "year") throw new BillingError("Choose monthly or yearly billing.");
+    if (plan === "team" && interval === "year") throw new BillingError("Team is billed monthly.");
     const base = this.cfg.publicUrl;
     if (!this.stripe) {
-      return { url: `${base}/billing/mock?plan=${plan}&tenant=${encodeURIComponent(tenant.slug)}`, mode: "mock" };
+      return { url: `${base}/billing/mock?plan=${plan}&interval=${interval}&tenant=${encodeURIComponent(tenant.slug)}`, mode: "mock" };
     }
-    const price = this.priceFor(plan);
-    if (!price) throw new BillingError(`No Stripe price configured for ${plan} (set STRIPE_PRICE_${plan.toUpperCase()}).`, 500);
+    const price = this.priceFor(plan, interval);
+    if (!price) throw new BillingError(`No Stripe price configured for ${plan} ${interval === "year" ? "yearly" : "monthly"} (set ${plan === "personal" ? (interval === "year" ? "STRIPE_PRICE_PERSONAL_YEARLY" : "STRIPE_PRICE_PERSONAL") : "STRIPE_PRICE_TEAM"}).`, 500);
     let customer = tenant.stripe_customer_id;
     if (!customer) {
       const c = await this.stripe.customers.create({ email, metadata: { tenant_id: tenant.id, tenant_slug: tenant.slug } });
@@ -69,7 +81,7 @@ export class Billing {
       customer,
       client_reference_id: tenant.id,
       line_items: [{ price, quantity: 1 }],
-      metadata: { tenant_id: tenant.id, plan },
+      metadata: { tenant_id: tenant.id, plan, interval },
       subscription_data: { metadata: { tenant_id: tenant.id, plan } },
       allow_promotion_codes: true,
       success_url: `${base}/dashboard?billing=success`,
@@ -154,8 +166,8 @@ export class Billing {
         const s = event.data.object as Stripe.Checkout.Session;
         const t = await this.tenantFor(s);
         if (!t) return null;
-        const plan = (s.metadata?.plan as PlanId) || "pro";
-        if (plan !== "pro" && plan !== "team") return null;
+        const plan = paidPlanFromMetadata(s.metadata?.plan) ?? "personal";
+        if (plan !== "personal" && plan !== "team") return null;
         // Payment gate: completing a session is not the same as being paid.
         // An async or failing payment method can complete the session with
         // payment_status "unpaid"; activating on metadata alone (the pre-B8
@@ -183,7 +195,7 @@ export class Billing {
         const t = await this.tenantFor(sub);
         if (!t) return null;
         const price = sub.items?.data?.[0]?.price?.id;
-        const plan = this.planForPrice(price) ?? ((sub.metadata?.plan as PlanId) || null);
+        const plan = this.planForPrice(price) ?? paidPlanFromMetadata(sub.metadata?.plan);
         const effective: PlanId = isPaidStatus(sub.status) && plan ? plan : "free";
         await this.setPlan(t.id, effective, sub.status, typeof sub.customer === "string" ? sub.customer : sub.customer.id, sub.id);
         return t.id;

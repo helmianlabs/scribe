@@ -387,7 +387,8 @@ export function createSaasApp(deps: SaasDeps) {
   api.post("/billing/checkout", wrap(async (req, res) => {
     const c = await caller(req, res, { ownerOnly: true }); if (!c) return;
     const plan = String(req.body?.plan || "") as PlanId;
-    res.json(await billing.checkout(c.tenant, plan, c.user!.email));
+    const interval = req.body?.interval === "year" ? "year" : "month";
+    res.json(await billing.checkout(c.tenant, plan, c.user!.email, interval));
   }));
   api.post("/billing/portal", wrap(async (req, res) => {
     const c = await caller(req, res, { ownerOnly: true }); if (!c) return;
@@ -431,7 +432,7 @@ export function createSaasApp(deps: SaasDeps) {
   }));
 
   // ------------------------------ Flags API (see docs/FLAGS_API.md)
-  const meter = (c: Caller) => db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, planOf(c.tenant)));
+  const meter = (c: Caller) => db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id));
   api.get("/flags", wrap(async (req, res) => {
     const c = await caller(req, res, { allowKeyScope: "flags.read" }); if (!c) return;
     if (c.key) await meter(c);
@@ -481,7 +482,10 @@ export function createSaasApp(deps: SaasDeps) {
     if (!Buffer.isBuffer(body) || body.length === 0) {
       res.status(400).json({ error: "Upload your Claude or ChatGPT export .zip as the request body." }); return;
     }
-    await db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id, planOf(c.tenant)));
+    if (!planOf(c.tenant).features.importHistory) {
+      res.status(402).json({ error: "Importing your Claude or ChatGPT history is part of the Personal plan. Upgrade on your dashboard.", limit: "feature" }); return;
+    }
+    await db.tenant(c.tenant.id, (q) => countCall(q, c.tenant.id));
     try {
       const out = await importHistory(db, c.tenant, planOf(c.tenant), body, alertTargetFor(c.tenant, cfg.publicUrl));
       res.json(out);

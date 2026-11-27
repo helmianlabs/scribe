@@ -21,7 +21,7 @@ function cfg(over: Partial<SaasConfig> = {}): SaasConfig {
     publicUrl: "http://127.0.0.1:8080",
     databaseUrl: "pglite",
     mail: { provider: "dev", from: null, outboxFile: "/tmp/smm-test-outbox.jsonl" },
-    stripe: { secretKey: null, webhookSecret: null, prices: { pro: null, team: null }, allowLive: false },
+    stripe: { secretKey: null, webhookSecret: null, prices: { personal: null, personalYearly: null, team: null }, allowLive: false },
     ...over,
   });
 }
@@ -104,12 +104,12 @@ test("production posture refuses localhost PUBLIC_URL, an unset PUBLIC_URL, and 
 });
 
 test("production posture accepts a fully configured production config", async () => {
-  await withEnv({ NODE_ENV: "production", DEPLOY_ENV: null, PUBLIC_URL: "https://connect.helmian.cloud" }, async () => {
+  await withEnv({ NODE_ENV: "production", DEPLOY_ENV: null, PUBLIC_URL: "https://scribemem.helmian.cloud" }, async () => {
     const db = pgliteDb(await provisionedDb(), "memory_app");
     const report = await validateSaasStartup(cfg({
-      publicUrl: "https://connect.helmian.cloud",
+      publicUrl: "https://scribemem.helmian.cloud",
       mail: { provider: "resend", from: "Scribe <login@helmian.cloud>", outboxFile: "/tmp/x" },
-      stripe: { secretKey: "sk_test_x", webhookSecret: "whsec_x", prices: { pro: "price_p", team: "price_t" }, allowLive: false },
+      stripe: { secretKey: "sk_test_x", webhookSecret: "whsec_x", prices: { personal: "price_p", personalYearly: "price_y", team: "price_t" }, allowLive: false },
     }), db);
     assert.equal(report.production, true);
     assert.deepEqual(report.warnings, []);
@@ -117,8 +117,8 @@ test("production posture accepts a fully configured production config", async ()
 });
 
 test("half-configured Stripe is refused in any posture; a live key without the live flag is refused", () => {
-  const half = assessConfig(cfg({ stripe: { secretKey: "sk_test_x", webhookSecret: null, prices: { pro: "price_p", team: null }, allowLive: false } }), false);
+  const half = assessConfig(cfg({ stripe: { secretKey: "sk_test_x", webhookSecret: null, prices: { personal: "price_p", personalYearly: "price_y", team: null }, allowLive: false } }), false);
   assert.ok(half.problems.some((p) => p.includes("half-configured") && p.includes("STRIPE_WEBHOOK_SECRET") && p.includes("STRIPE_PRICE_TEAM")));
-  const live = assessConfig(cfg({ stripe: { secretKey: "sk_live_x", webhookSecret: "whsec_x", prices: { pro: "price_p", team: "price_t" }, allowLive: false } }), false);
+  const live = assessConfig(cfg({ stripe: { secretKey: "sk_live_x", webhookSecret: "whsec_x", prices: { personal: "price_p", personalYearly: "price_y", team: "price_t" }, allowLive: false } }), false);
   assert.ok(live.problems.some((p) => p.includes("LIVE key")));
 });

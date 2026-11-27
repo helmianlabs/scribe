@@ -8,11 +8,11 @@ export interface SaasConfig {
   databaseUrl: string;
   databaseSsl: boolean;
   mail: { provider: "resend" | "dev"; from: string | null; outboxFile: string };
-  stripe: { secretKey: string | null; webhookSecret: string | null; prices: { pro: string | null; team: string | null }; allowLive: boolean };
+  stripe: { secretKey: string | null; webhookSecret: string | null; prices: { personal: string | null; personalYearly: string | null; team: string | null }; allowLive: boolean };
   sessionTtlDays: number;
   magicLinkTtlMin: number;
   cookieSecure: boolean;
-  limitsOverride: Partial<Record<"free" | "pro" | "team", { maxMemories?: number; callsPerDay?: number }>>;
+  limitsOverride: Partial<Record<"free" | "personal" | "team", { maxMemories?: number | null; maxBytes?: number; maxTypedRules?: number | null }>>;
 }
 
 function env(name: string): string | null {
@@ -36,7 +36,7 @@ export function loadSaasConfig(over: Partial<SaasConfig> = {}): SaasConfig {
     stripe: {
       secretKey: env("STRIPE_SECRET_KEY"),
       webhookSecret: env("STRIPE_WEBHOOK_SECRET"),
-      prices: { pro: env("STRIPE_PRICE_PRO"), team: env("STRIPE_PRICE_TEAM") },
+      prices: { personal: env("STRIPE_PRICE_PERSONAL"), personalYearly: env("STRIPE_PRICE_PERSONAL_YEARLY"), team: env("STRIPE_PRICE_TEAM") },
       allowLive: env("STRIPE_ALLOW_LIVE") === "yes-i-mean-live",
     },
     sessionTtlDays: Number(env("SESSION_TTL_DAYS") || 30),

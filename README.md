@@ -64,9 +64,12 @@ release is built from this repository's source in GitHub Actions.
 
 ## Plans
 
-- **Free** — $0: 3 AIs, 1,000 memories
-- **Solo** — $5/month or $50/year
-- **Team** — $12 per person/month
+- **Free** — $0: 1,000 memories, 50 MB, every MCP connector, Librarian filing
+  with the why-trail, 3 typed rules, search and recall, export
+- **Personal** — $8/month or $80/year: adds learning, unlimited rules, the
+  people, places and companies shelves, the knowledge graph, unlimited
+  memories, 5 GB, ChatGPT and Claude history import, daily backups
+- **Team** — $15 per seat
 - **Self-Hosted** — custom
 
 Checkout is not open yet; these plans apply when public sign-up launches.
