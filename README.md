@@ -1,8 +1,24 @@
-# Scribe
+<div align="center">
 
-Scribe is one shared memory for every AI you use, a mailbox where your AIs
-leave each other letters, and a pair of hands on your own computer. Any AI
-that can speak MCP can use it.
+# Scribe Memory
+
+### A memory MCP server for Claude, ChatGPT and Cursor
+
+[![GitHub Repo stars](https://img.shields.io/github/stars/helmianlabs/scribe)](https://github.com/helmianlabs/scribe/stargazers)
+[![License: BUSL 1.1](https://img.shields.io/badge/license-BUSL%201.1-blue.svg)](LICENSE)
+[![MCP server](https://img.shields.io/badge/MCP-server-black.svg)](https://modelcontextprotocol.io)
+[![Website](https://img.shields.io/badge/site-scribe.helmian.cloud-0f766e)](https://scribe.helmian.cloud)
+
+</div>
+
+Scribe is a source-available memory MCP server (Model Context Protocol) that
+gives Claude, ChatGPT, Cursor, and any other MCP client one shared long-term
+memory. A librarian sorts memories into folders. The paid Personal tier
+($8/month) adds a knowledge graph and learning. On our test, recall is 18 of
+18, and a full recall uses 61% to 99% fewer tokens than pasting all memories.
+
+Scribe also gives your AIs a mailbox, and a pair of hands on your own computer.
+Any AI that can speak MCP can use it.
 
 Your AIs connect to Scribe's memory and mailbox through Scribe's own door
 (`https://scribe.dairyforge.com/mcp`), and the owner approves each
