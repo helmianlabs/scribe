@@ -16,7 +16,7 @@
 // row-level security switched on by 005/006 actually binds it.
 //
 // The chain is: 000_base -> 001_librarian -> 003_search_index -> 004_flags ->
-// 005_saas -> 006_courier -> 007_stripe_events_status -> 009_plans_personal -> 010_paddle_seats -> 011_recall_quality.
+// 005_saas -> 006_courier -> 007_stripe_events_status -> 009_plans_personal -> 010_paddle_seats -> 011_recall_quality -> 012_memory_embeddings.
 // 002_fix_ro_role.sql is deliberately NOT in the chain:
 // it is a one-off fix for Sam's live claude_memory database (it references
 // Neon-specific roles) and is Sam's call, not a provisioning step.
@@ -41,6 +41,7 @@ const MIGRATIONS = [
   "009_plans_personal.sql",
   "010_paddle_seats.sql",
   "011_recall_quality.sql",
+  "012_memory_embeddings.sql",
 ];
 const MIG_DIR = new URL("../../../migrations/", import.meta.url);
 
@@ -51,7 +52,7 @@ const EXPECTED_TABLES = [
   "tenants", "users", "memberships", "magic_links", "sessions", "oauth_clients", "oauth_pending",
   "oauth_codes", "oauth_tokens", "api_keys", "stripe_events", "paddle_events", "usage_daily", "tenant_storage",
   "flags", "agent_messages", "agent_message_reads", "agent_directory",
-  "memory_supersessions", "memory_recalls",
+  "memory_supersessions", "memory_recalls", "memory_embeddings",
 ];
 const EXPECTED_VIEWS = ["memory_current_filing", "memory_unsorted", "librarian_active_rules"];
 // Tables 005/006 put under FORCE row-level security with a tenant_isolation policy.
@@ -59,7 +60,7 @@ const RLS_TABLES = [
   "conversations", "messages", "projects", "librarian_settings", "librarian_rules",
   "memory_filings", "memory_moves", "flags", "usage_daily", "tenant_storage",
   "agent_messages", "agent_message_reads", "agent_directory",
-  "memory_supersessions", "memory_recalls",
+  "memory_supersessions", "memory_recalls", "memory_embeddings",
 ];
 
 const fail = (msg) => { console.error(`\nPROVISIONING FAILED: ${msg}`); process.exit(1); };
@@ -164,6 +165,7 @@ try {
   if (!(await priv("messages_id_seq", "USAGE", "sequence"))) problems.push("memory_app lacks USAGE on messages_id_seq");
   if (!(await priv("memory_recalls", "INSERT"))) problems.push("memory_app lacks INSERT on memory_recalls (011_recall_quality.sql)");
   if (!(await priv("memory_supersessions", "INSERT"))) problems.push("memory_app lacks INSERT on memory_supersessions (011_recall_quality.sql)");
+  if (!(await priv("memory_embeddings", "INSERT"))) problems.push("memory_app lacks INSERT on memory_embeddings (012_memory_embeddings.sql)");
   if (!(await priv("schema_migrations", "SELECT"))) problems.push("memory_app lacks SELECT on schema_migrations (the server's boot-time drift check reads it; re-run provisioning in apply mode to grant it)");
 
   if (tables.has("tenants")) {

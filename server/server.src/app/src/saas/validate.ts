@@ -34,13 +34,14 @@ export const MIGRATION_FILES = [
   "009_plans_personal.sql",
   "010_paddle_seats.sql",
   "011_recall_quality.sql",
+  "012_memory_embeddings.sql",
 ];
 // Tables 005/006 put under FORCE row-level security with a tenant_isolation policy.
 const RLS_TABLES = [
   "conversations", "messages", "projects", "librarian_settings", "librarian_rules",
   "memory_filings", "memory_moves", "flags", "usage_daily", "tenant_storage",
   "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory",
-  "memory_supersessions", "memory_recalls",
+  "memory_supersessions", "memory_recalls", "memory_embeddings",
 ];
 
 export function isProductionPosture(): boolean {

@@ -8,6 +8,7 @@ import type { Db } from "./db.js";
 import type { Tenant } from "./accounts.js";
 import { planFor, LimitError, type Plan } from "./plans.js";
 import { countCall, searchMemory, saveMemory, getMessageById, TenantLibrarian } from "./memory.js";
+import { storeEmbeddings, type Embedder } from "./embeddings.js";
 import { DEFAULT_MAX_TOKENS, historyOf, logRecall, supersede, SupersedeError, type RerankHook } from "./recall.js";
 import { prepareContent, findingsToFlags, recordFlags, summarize } from "../flags/service.js";
 import { listFlags } from "../flags/store.js";
@@ -24,7 +25,7 @@ export function alertTargetFor(t: Tenant, publicUrl: string): AlertTarget {
 const json = (o: Record<string, unknown>) => ({ content: [{ type: "text" as const, text: JSON.stringify(o) }], structuredContent: o });
 const fail = (msg: string) => ({ content: [{ type: "text" as const, text: msg }], isError: true });
 
-export interface McpCtx { db: Db; tenant: Tenant; scopes: string[]; publicUrl: string; limitsOverride?: Record<string, Partial<Plan>>; clientId?: string; clientName?: string | null; /** Optional search rerank hook (e.g. embeddings). Off unless the app is built with one. */ rerank?: RerankHook; }
+export interface McpCtx { db: Db; tenant: Tenant; scopes: string[]; publicUrl: string; limitsOverride?: Record<string, Partial<Plan>>; clientId?: string; clientName?: string | null; /** Optional search rerank hook (e.g. embeddings). Off unless the app is built with one. */ rerank?: RerankHook; /** Optional meaning-based search; undefined = full-text only. */ embedder?: Embedder; }
 
 export function buildTenantMcpServer(ctx: McpCtx): McpServer {
   const { db, tenant, scopes } = ctx;
@@ -56,7 +57,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
     },
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async (p: { query: string; since?: string; limit?: number; max_tokens?: number; include_history?: boolean }) => run("call", async (q) => {
-    const found = await searchMemory(q, tenant.id, { query: p.query, since: p.since, limit: p.limit ?? 20, maxTokens: p.max_tokens, includeHistory: p.include_history, rerank: ctx.rerank });
+    const found = await searchMemory(q, tenant.id, { query: p.query, since: p.since, limit: p.limit ?? 20, maxTokens: p.max_tokens, includeHistory: p.include_history, rerank: ctx.rerank, embedder: ctx.embedder });
     let rows = found.results;
     while (JSON.stringify(rows).length > CHARACTER_LIMIT && rows.length > 1) rows = rows.slice(0, Math.floor(rows.length / 2));
     return { total: found.total_matches, returned: rows.length, truncated: rows.length < Number.parseInt(String(found.total_matches), 10), est_tokens: found.est_tokens, results: rows };
@@ -118,6 +119,7 @@ export function buildTenantMcpServer(ctx: McpCtx): McpServer {
       const saved = await saveMemory(q, tenant.id, plan, { content: prepared.text, source: p.source, category: p.category ? scanText(p.category).redacted : undefined, tags });
       const replaced: number[] = [];
       for (const id of p.replaces ?? []) { await supersede(q, tenant.id, id, saved.message_id, p.source); replaced.push(id); }
+      if (ctx.embedder) await storeEmbeddings(q, tenant.id, saved.message_id, saved.text, ctx.embedder); // fail-soft
       let filing: Record<string, unknown> = {};
       try {
         const f = await new TenantLibrarian(q, tenant.id, {}, plan).fileSaved({ id: saved.message_id, text: saved.text, sender: p.source, source: p.source, conversationName: saved.conversation_name });

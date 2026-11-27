@@ -22,6 +22,7 @@ services:
       - ../migrations/009_plans_personal.sql:/docker-entrypoint-initdb.d/90_009_plans_personal.sql:ro
       - ../migrations/010_paddle_seats.sql:/docker-entrypoint-initdb.d/91_010_paddle_seats.sql:ro
       - ../migrations/011_recall_quality.sql:/docker-entrypoint-initdb.d/92_011_recall_quality.sql:ro
+      - ../migrations/012_memory_embeddings.sql:/docker-entrypoint-initdb.d/93_012_memory_embeddings.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U owner -d memory"]
       interval: 2s
