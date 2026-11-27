@@ -115,7 +115,7 @@ test("Free: learning from a manual move is off; Personal learns a rule from it",
   const out: any[] = [];
   for (const a of [free, pers]) {
     const m = await save(a, "grapefruit supply chain notes");
-    const mv = await a.call("move_memory", { message_id: m.data.message_id, to_category: "helmian", source: "claude.ai" });
+    const mv = await a.call("move_memory", { message_id: m.data.message_id, to_category: "business", source: "claude.ai" });
     out.push(mv.data);
   }
   assert.equal(out[0].moved, true);

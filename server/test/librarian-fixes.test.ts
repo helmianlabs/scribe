@@ -5,10 +5,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import {
-  checkCategory, classify, classifyBatch, knownCategories, learnFromMove, MAX_CHAIN_PASSES, parsePlainRule, planBackfill, PRESET_D, PRESETS,
+  checkCategory, classify, classifyBatch, knownCategories, learnFromMove, MAX_CHAIN_PASSES, parsePlainRule, planBackfill, OWNER_PRESETS,
   trailOf, UNSORTED, withoutEntityShelves, ENTITY_SHELVES, withRetry, type MemoryItem, type Rule, type Rulebook,
 } from '../src/librarian/index.ts';
 import { addPlainRule, explainFiling, fileMessage, moveMemory, refileUnsorted } from '../src/server/librarian-store.ts';
+
+// The owner's presets: the single-tenant store these tests drive uses the owner pack by default.
+const PRESETS = OWNER_PRESETS;
+const PRESET_D = OWNER_PRESETS.D;
 
 const item = (id: number, text: string, extra: Partial<MemoryItem> = {}): MemoryItem => ({ id, text, ...extra });
 const cat = (text: string, extra: Rule[] = []) => classify(item(1, text), PRESET_D, extra);

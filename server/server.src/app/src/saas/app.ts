@@ -18,6 +18,7 @@ import { PaddleBilling, type PaddleFetch } from "./paddle.js";
 import { ApiKeys, type ApiKeyAuth } from "./apikeys.js";
 import { planFor, LimitError, PLANS, TEAM_MAX_SEATS, type PlanId } from "./plans.js";
 import { buildTenantMcpServer, alertTargetFor } from "./mcp.js";
+import type { RerankHook } from "./recall.js";
 import { countCall, usage, exportAll, deleteAll, secondsToUtcMidnight } from "./memory.js";
 import { importHistory, ImportError, MAX_ZIP_BYTES } from "./importer.js";
 import { courierMailboxStatus, unreadSummary, PostOfficeError } from "../courier/store.js";
@@ -29,7 +30,7 @@ import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBi
 
 const COOKIE = "smm_session";
 
-export interface SaasDeps { db: Db; cfg: SaasConfig; mailer?: Mailer; stripe?: Stripe; paddleFetch?: PaddleFetch; }
+export interface SaasDeps { db: Db; cfg: SaasConfig; mailer?: Mailer; stripe?: Stripe; paddleFetch?: PaddleFetch; /** Optional search rerank hook (e.g. embeddings); none by default. */ rerank?: RerankHook; }
 
 function cookies(req: Request): Record<string, string> {
   const out: Record<string, string> = {};
@@ -283,7 +284,7 @@ export function createSaasApp(deps: SaasDeps) {
     const ok = await mcpAuth(req, res, slugOf(req));
     if (!ok) return;
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    const server = buildTenantMcpServer({ db, tenant: ok.tenant, scopes: ok.auth.scopes, publicUrl: cfg.publicUrl, limitsOverride: cfg.limitsOverride as never, clientId: ok.auth.clientId, clientName: await oauth.clientName(ok.auth.clientId) });
+    const server = buildTenantMcpServer({ db, tenant: ok.tenant, scopes: ok.auth.scopes, publicUrl: cfg.publicUrl, limitsOverride: cfg.limitsOverride as never, clientId: ok.auth.clientId, clientName: await oauth.clientName(ok.auth.clientId), rerank: deps.rerank });
     res.on("close", () => { transport.close(); server.close(); });
     await server.connect(transport);
     await transport.handleRequest(req, res, req.body);

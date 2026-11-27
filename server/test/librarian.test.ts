@@ -2,8 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   classify, classifyAll, distribution, detectShape, parseTags, stripTagLine, notebookLabel,
-  PRESETS, PRESET_A, PRESET_B, PRESET_C, PRESET_D, parsePlainRule, learnFromMove, UNSORTED, type MemoryItem,
+  OWNER_PRESETS, parsePlainRule, learnFromMove, UNSORTED, type MemoryItem,
 } from '../src/librarian/index.ts';
+
+// These tests pin the owner's own filing (vocabOwner.ts). The generic hosted presets are tested in vocab-packs.test.ts.
+const PRESETS = OWNER_PRESETS;
+const { A: PRESET_A, B: PRESET_B, C: PRESET_C, D: PRESET_D } = OWNER_PRESETS;
 
 const item = (id: number, text: string, extra: Partial<MemoryItem> = {}): MemoryItem => ({ id, text, sender: 'assistant', ...extra });
 

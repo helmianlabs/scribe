@@ -3,7 +3,7 @@
  * Call fileMessage() right after save_memory inserts its message row.
  */
 import {
-  checkCategory, classify, knownCategories, learnFromMove, normaliseCategory, parsePlainRule, planBackfill, PLAIN_RULE_HELP, PRESETS, trailOf, trailSummary, UNSORTED, withRetry,
+  checkCategory, classify, knownCategories, learnFromMove, normaliseCategory, parsePlainRule, planBackfill, PLAIN_RULE_HELP, presetsFor, trailOf, trailSummary, UNSORTED, withRetry,
   type Filing, type MemoryItem, type RetryOptions, type Rule, type Rulebook,
 } from '../librarian/index.ts';
 
@@ -13,7 +13,14 @@ export interface Queryable {
   query(sql: string, params?: unknown[]): Promise<{ rows: any[] }>;
 }
 
+/**
+ * This single-tenant store is the owner's own install: it uses the owner's word pack unless LIBRARIAN_VOCAB=generic.
+ * (Hosted tenants never come through here; they use the generic presets.)
+ */
+export const STORE_PRESETS = () => presetsFor(process.env.LIBRARIAN_VOCAB, 'owner');
+
 export async function activeRulebook(db: Queryable): Promise<Rulebook> {
+  const PRESETS = STORE_PRESETS();
   const r = await db.query('SELECT rulebook FROM librarian_settings ORDER BY chosen_at DESC, id DESC LIMIT 1');
   const id: string = r.rows[0]?.rulebook ?? 'preset-d';
   return Object.values(PRESETS).find((b) => b.id === id) ?? PRESETS.D;

@@ -10,6 +10,7 @@ import {
   type Filing, type MemoryItem, type RetryOptions, type Rule, type Rulebook,
 } from "../librarian/index.js";
 import { LimitError, fmtBytes, type Plan } from "./plans.js";
+import { searchRanked, type SearchParams } from "./recall.js";
 
 export const ENGINE_VERSION = "librarian-0.3.0+saas";
 
@@ -52,17 +53,12 @@ export async function usage(q: Q, tenantId: string): Promise<{ memories: number;
 }
 
 // ------------------------------------------------------------------ search / save
-export async function searchMemory(q: Q, tenantId: string, p: { query: string; since?: string; limit: number }) {
-  const vals: unknown[] = [tenantId, `%${p.query.replace(/[\\%_]/g, (c) => "\\" + c)}%`];
-  let since = "";
-  if (p.since?.trim()) { vals.push(p.since.trim()); since = `AND m.created_at >= $${vals.length}`; }
-  vals.push(p.limit);
-  const r = await q.query(
-    `SELECT m.id AS message_id, c.name AS conversation_name, m.sender, m.created_at, LEFT(m.text, 300) AS snippet
-     FROM messages m JOIN conversations c ON c.uuid = m.conversation_uuid AND c.tenant_id = m.tenant_id
-     WHERE m.tenant_id = $1 AND m.text ILIKE $2 ${since}
-     ORDER BY m.created_at DESC LIMIT $${vals.length}`, vals);
-  return r.rows.map((x) => ({ message_id: Number(x.message_id), conversation_name: x.conversation_name, sender: x.sender, created_at: iso(x.created_at), snippet: x.snippet ?? "" }));
+/**
+ * search_memory: ranked full-text recall with centred snippets, usage-aware ranking, superseded memories hidden and a
+ * token budget (see recall.ts). The old newest-first substring search is kept inside it as the fallback tier.
+ */
+export async function searchMemory(q: Q, tenantId: string, p: SearchParams) {
+  return searchRanked(q, tenantId, p);
 }
 
 export interface FullMessage {
@@ -310,11 +306,11 @@ export { UNSORTED };
 
 // ------------------------------------------------------------------ export / delete-all
 // librarian_settings (the chosen rulebook) and usage_daily (fair-use metering) are kept.
-const DATA_TABLES = ["agent_message_receipts", "agent_message_reads", "agent_directory", "agent_messages", "flags", "memory_moves", "memory_filings", "librarian_rules", "messages", "conversations", "projects"] as const;
+const DATA_TABLES = ["memory_recalls", "memory_supersessions", "agent_message_receipts", "agent_message_reads", "agent_directory", "agent_messages", "flags", "memory_moves", "memory_filings", "librarian_rules", "messages", "conversations", "projects"] as const;
 
 export async function exportAll(q: Q, tenantId: string) {
   const out: Record<string, unknown[]> = {};
-  for (const t of ["conversations", "messages", "projects", "memory_filings", "memory_moves", "librarian_rules", "librarian_settings", "flags", "usage_daily", "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory"]) {
+  for (const t of ["conversations", "messages", "projects", "memory_filings", "memory_moves", "memory_supersessions", "memory_recalls", "librarian_rules", "librarian_settings", "flags", "usage_daily", "agent_messages", "agent_message_reads", "agent_message_receipts", "agent_directory"]) {
     const r = await q.query(`SELECT * FROM ${t} WHERE tenant_id = $1 ORDER BY 1`, [tenantId]);
     out[t] = r.rows;
   }

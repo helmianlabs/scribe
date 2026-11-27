@@ -9,7 +9,8 @@
  */
 import { readFileSync } from 'node:fs';
 import pg from 'pg';
-import { classifyAll, distribution, PRESETS, type MemoryItem } from '../src/librarian/index.ts';
+import { classifyAll, distribution, presetsFor, type MemoryItem } from '../src/librarian/index.ts';
+const PRESETS = presetsFor(process.env.LIBRARIAN_VOCAB, 'owner'); // owner's ops script: owner pack unless LIBRARIAN_VOCAB=generic
 
 const args = process.argv.slice(2);
 const arg = (k: string) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };

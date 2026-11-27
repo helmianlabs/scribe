@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { fileMessage, recordFiling } from '../src/server/librarian-store.ts';
-import { classify, PRESET_D } from '../src/librarian/index.ts';
+import { classify, OWNER_PRESETS } from '../src/librarian/index.ts';
+const PRESET_D = OWNER_PRESETS.D; // the single-tenant store uses the owner pack by default
 
 const BASE = `
 CREATE ROLE memory_rw; CREATE ROLE memory_ro_hz;

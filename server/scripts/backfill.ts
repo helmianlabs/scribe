@@ -15,7 +15,8 @@
  * This script is never run by the server or by CI; a person runs it, on purpose.
  */
 import pg from 'pg';
-import { distribution, planBackfill, PRESETS } from '../src/librarian/index.ts';
+import { distribution, planBackfill, presetsFor } from '../src/librarian/index.ts';
+const PRESETS = presetsFor(process.env.LIBRARIAN_VOCAB, 'owner'); // owner's ops script: owner pack unless LIBRARIAN_VOCAB=generic
 import { activeExtraRules, activeRulebook, recordFilingsBulk } from '../src/server/librarian-store.ts';
 const args = process.argv.slice(2);
 const arg = (k: string) => { const i = args.indexOf(k); return i >= 0 ? args[i + 1] : undefined; };

@@ -28,7 +28,7 @@ export async function freshDb(opts: { saas?: boolean } = {}) {
   await pg.exec(sql("006_courier.sql"));
   await pg.exec(sql("008_graph.sql"));
   if (opts.saas !== false) await pg.exec(sql("007_stripe_events_status.sql"));
-  if (opts.saas !== false) { await pg.exec(sql("009_plans_personal.sql")); await pg.exec(sql("010_paddle_seats.sql")); }
+  if (opts.saas !== false) { await pg.exec(sql("009_plans_personal.sql")); await pg.exec(sql("010_paddle_seats.sql")); await pg.exec(sql("011_recall_quality.sql")); }
   return pg;
 }
 

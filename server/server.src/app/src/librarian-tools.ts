@@ -16,10 +16,16 @@ import { isMailboxCategory } from "./courier/mailboxes.js";
 import type pg from "pg";
 import {
   applyIgnore, checkCategory, classify, classifyBatch, KnowledgeGraph, knownCategories, learnFromMove, parsePlainRule, planBackfill, PLAIN_RULE_HELP,
-  PRESETS, stripTagLine, trailOf, trailSummary, UNSORTED, withRetry,
+  presetsFor, stripTagLine, trailOf, trailSummary, UNSORTED, withRetry,
   type Filing, type MemoryItem, type Rule, type Rulebook,
 } from "./librarian/index.js";
-import { PROJECTS } from "./librarian/vocab.js";
+import { vocabFor } from "./librarian/presets.js";
+
+/**
+ * Word pack for this single-tenant server: generic by default (the same fresh start hosted tenants get);
+ * LIBRARIAN_VOCAB=owner selects the original owner's pack (vocabOwner.ts) on the owner's own install.
+ */
+const packName = (explicit?: string) => explicit ?? process.env.LIBRARIAN_VOCAB;
 
 export const ENGINE_VERSION = "librarian-0.3.0";
 const NOT_INSTALLED = "The Librarian's tables are not installed in the database yet (migration 001_librarian.sql), so nothing can be recorded.";
@@ -32,17 +38,23 @@ const msg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 export class Librarian {
   private graph: KnowledgeGraph;
 
-  constructor(private read: pg.Pool, private write: pg.Pool, private retry: { sleep?: (ms: number) => Promise<void> } = {}) {
+  private presets: ReturnType<typeof presetsFor>;
+  private projects: ReturnType<typeof vocabFor>["projects"];
+
+  /** `opts.vocab` ('generic' | 'owner') overrides LIBRARIAN_VOCAB; the default is generic. */
+  constructor(private read: pg.Pool, private write: pg.Pool, private retry: { sleep?: (ms: number) => Promise<void> } = {}, opts: { vocab?: string } = {}) {
     this.graph = new KnowledgeGraph(read, write);
+    this.presets = presetsFor(packName(opts.vocab), "generic");
+    this.projects = vocabFor(packName(opts.vocab), "generic").projects;
   }
 
   async rulebook(): Promise<Rulebook> {
     try {
       const r = await this.read.query("SELECT rulebook FROM librarian_settings ORDER BY chosen_at DESC, id DESC LIMIT 1");
       const id = r.rows[0]?.rulebook as string | undefined;
-      return Object.values(PRESETS).find((b) => b.id === id) ?? PRESETS.D;
+      return Object.values(this.presets).find((b) => b.id === id) ?? this.presets.D;
     } catch {
-      return PRESETS.D;
+      return this.presets.D;
     }
   }
 
@@ -75,6 +87,7 @@ export class Librarian {
   }
 
   private projectNameForFiling(f: Filing): string | null {
+    const PROJECTS = this.projects;
     for (const hit of f.hits) {
       const slug = /^(?:content\.project|content\.notebook|content\.project-context)\.(.+)$/.exec(hit.ruleId)?.[1];
       if (slug && PROJECTS[slug]) return PROJECTS[slug].name;

@@ -69,7 +69,8 @@ test("self-host Librarian: failed filing is retried then reported, not swallowed
 
 test("self-host Librarian: full trail, move refresh, shelf guard, unique rule ids, tray re-file after a rule", async () => {
   const db = await freshDb({ saas: false });
-  const lib = new Librarian(pool(db), pool(db), sleepless);
+  // Pinned to the owner's pack (LIBRARIAN_VOCAB=owner), where money mixed with day-job words is Finance.
+  const lib = new Librarian(pool(db), pool(db), sleepless, { vocab: "owner" });
   const a = await msg(db, "invoice from Giltner trucking for $400");
   await lib.fileSaved({ id: a, text: "invoice from Giltner trucking for $400", sender: "claude.ai" });
   const e: any = await lib.explain(a);
