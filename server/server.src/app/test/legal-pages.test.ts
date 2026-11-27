@@ -28,8 +28,15 @@ test("legal and pricing pages return HTML 200 with required copy and a footer", 
       assert.match(html, /href="\/privacy"/);
       assert.match(html, /href="\/refunds"/);
       assert.match(html, /helmianlabs@gmail.com/);
+      assert.match(html, /id="theme-toggle"/, `${page.path} theme toggle`);
       for (const re of page.extra) assert.match(html, re, `${page.path} ${re}`);
     }
+
+    // Theme script is served and functional.
+    const themeJs = await fetch(`${s.base}/static/theme.js`);
+    assert.equal(themeJs.status, 200);
+    assert.match(themeJs.headers.get("content-type") ?? "", /text\/javascript/);
+    assert.match(await themeJs.text(), /localStorage\.setItem\('theme'/);
 
     // Footer is on existing HTML pages too.
     const login = await fetch(`${s.base}/login`);
