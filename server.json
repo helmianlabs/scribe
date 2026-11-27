@@ -1,11 +1,11 @@
 {
   "$schema": "https://modelcontextprotocol.io/schemas/registry/v1/server.json",
-  "name": "scribe-memory",
-  "title": "Scribe Memory",
+  "name": "scribemem",
+  "title": "ScribeMem",
   "version": "1.0.0",
   "description": "Persistent, token-efficient shared memory and cross-agent context bridge for AI workflows.",
   "vendor": "Helmian Labs",
-  "homepage": "https://scribe.helmian.cloud",
+  "homepage": "https://scribemem.helmian.cloud",
   "repository": {
     "type": "git",
     "url": "https://github.com/helmianlabs/scribe"
@@ -22,6 +22,7 @@
     "ai-memory",
     "persistent-memory",
     "llm-memory",
-    "context-window"
+    "context-window",
+    "scribemem"
   ]
 }
