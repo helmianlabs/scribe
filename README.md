@@ -13,8 +13,10 @@
 
 Scribe is a source-available memory MCP server (Model Context Protocol) that
 gives Claude, ChatGPT, Cursor, and any other MCP client one shared long-term
-memory. A librarian sorts memories into folders. On our test, recall is 18 of
-18, and a full recall uses 61% to 99% fewer tokens than pasting all memories.
+memory. A librarian sorts memories into folders and keeps a knowledge graph of
+the people, places, projects and other entities in those memories. On our test,
+recall is 18 of 18, and a full recall uses 61% to 99% fewer tokens than pasting
+all memories.
 
 Scribe also gives your AIs a mailbox, and a pair of hands on your own computer.
 Any AI that can speak MCP can use it.
@@ -96,6 +98,11 @@ release is built from this repository's source in GitHub Actions.
 
 - **Remembers once, for every AI.** Every AI you connect reads and writes the
   same shared memory, so what one AI learns, the others can use.
+- **Files memories and links the named things in them.** The Librarian shelves
+  each memory and builds a knowledge graph of people, places, projects, agents
+  and other entities, with proven links (who wrote it, where it was filed, what
+  it mentions). On self-host, the read-only `graph_neighbors` tool returns one
+  entity and its linked neighbours.
 - **Gives your AIs a mailbox.** With Courier, your AIs leave each other
   letters: hand-offs, status and questions, delivered through Scribe.
 - **Pairs** your PC once, with your Scribe passphrase or a one-time pairing code,
@@ -115,9 +122,10 @@ release is built from this repository's source in GitHub Actions.
   Librarian filing with the why-trail, 3 typed rules, search and recall, export
 - **Personal** — $8/month or $80/year: adds learning, unlimited rules, the
   people, places and companies shelves, unlimited memories, 5 GB, 10,000
-  calls a day, and ChatGPT and Claude history import. A knowledge graph and
-  daily backups are planned for this tier; they are not on the hosted service
-  yet.
+  calls a day, and ChatGPT and Claude history import. The Librarian's
+  knowledge graph is live on self-host (`graph_neighbors`). On the hosted
+  service it is reserved for Personal and Team but is not on the hosted MCP
+  yet. Daily backups are also reserved for this tier and are not running yet.
 - **Team** — $15 per seat. Paid checkout is not open yet, and there is no
   team invite flow yet.
 - **Self-Hosted** — custom
@@ -204,9 +212,20 @@ The Librarian files every saved memory on a shelf with a fixed, explainable rule
 (no AI involved). Shelves now include `people`, `places` and `organizations`. `explain_filing`
 returns every rule that matched, `add_rule` accepts plain sentences such as
 "Giltner goes in organizations", unknown shelf names need `confirm_new_category: true`,
-and new rules re-file the unsorted tray. The self-host server also builds a small knowledge
-graph (`entities`, `links`; tool `graph_neighbors`; migration `server/migrations/008_graph.sql`).
-Details: [docs/LIBRARIAN-AUDIT-FIXES.md](docs/LIBRARIAN-AUDIT-FIXES.md).
+and new rules re-file the unsorted tray.
+
+The Librarian also has a knowledge graph attached. When a memory is filed, the
+self-host server records named entities (people, agents, projects, products,
+organizations, places, topics and values) and the proven links between them —
+who wrote the memory, which shelf it went on, and names mentioned in the text —
+with no model calls. The read-only `graph_neighbors` tool returns one entity
+and its linked neighbours (relation, direction, and the source that proved the
+link). Depth is one hop in v1. Tables and tool: `entities`, `links`,
+`graph_neighbors`, migration `server/migrations/008_graph.sql`. The live
+self-host Scribe memory MCP exposes this tool today. The hosted service at
+scribemem.helmian.cloud files memories and offers `explain_filing`, but does
+not yet expose `graph_neighbors` (the Personal and Team plans reserve it as an
+entitlement). Details: [docs/LIBRARIAN-AUDIT-FIXES.md](docs/LIBRARIAN-AUDIT-FIXES.md).
 
 ## Continuous integration
 
