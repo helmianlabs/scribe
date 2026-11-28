@@ -7,64 +7,84 @@ const CSS = `:root {
   --surface: #ffffff;
   --surface-hover: #f1f5f9;
   --surface-border: #e2e8f0;
+  --surface-border-subtle: #f1f5f9;
   --text: #0f172a;
   --text-muted: #475569;
   --text-dim: #64748b;
   --primary: #2563eb;
   --primary-hover: #1d4ed8;
+  --primary-glow: rgba(37, 99, 235, 0.15);
   --accent-cyan: #0284c7;
   --accent-emerald: #059669;
-  --card-shadow: 0 1px 3px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04);
+  --accent-emerald-bg: rgba(5, 150, 105, 0.1);
+  --code-bg: #f8fafc;
+  --code-border: #e2e8f0;
+  --terminal-bg: #0b0f19;
+  --terminal-text: #e2e8f0;
+  --card-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+  --card-hover-shadow: 0 12px 24px -4px rgba(0, 0, 0, 0.08);
   --popular-border: #2563eb;
-  --popular-bg: #eff6ff;
+  --popular-bg: #ffffff;
+  --popular-glow: 0 0 0 1px #2563eb, 0 12px 30px -4px rgba(37, 99, 235, 0.16);
   --nav-bg: rgba(255, 255, 255, 0.85);
   color-scheme: light;
 }
 
 [data-theme="dark"] {
-  --bg: #070c18;
-  --bg-subtle: #0d1527;
-  --surface: #0f1a30;
-  --surface-hover: #162442;
-  --surface-border: #1e2e4a;
+  --bg: #07090e;
+  --bg-subtle: #0d111a;
+  --surface: #0f1422;
+  --surface-hover: #151b2e;
+  --surface-border: #1e2638;
+  --surface-border-subtle: #161c2a;
   --text: #f8fafc;
   --text-muted: #94a3b8;
   --text-dim: #64748b;
   --primary: #3b82f6;
-  --primary-hover: #2563eb;
+  --primary-hover: #60a5fa;
+  --primary-glow: rgba(59, 130, 246, 0.25);
   --accent-cyan: #38bdf8;
   --accent-emerald: #10b981;
-  --card-shadow: 0 4px 20px rgba(0,0,0,0.3);
+  --accent-emerald-bg: rgba(16, 185, 129, 0.12);
+  --code-bg: #090d16;
+  --code-border: #1e2638;
+  --terminal-bg: #070a12;
+  --terminal-text: #e2e8f0;
+  --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  --card-hover-shadow: 0 14px 32px rgba(0, 0, 0, 0.5);
   --popular-border: #3b82f6;
-  --popular-bg: #111e38;
-  --nav-bg: rgba(7, 12, 24, 0.85);
+  --popular-bg: #101728;
+  --popular-glow: 0 0 0 1px #3b82f6, 0 14px 36px rgba(59, 130, 246, 0.2);
+  --nav-bg: rgba(7, 9, 14, 0.82);
   color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   background: var(--bg);
   color: var(--text);
   margin: 0;
   line-height: 1.6;
   -webkit-font-smoothing: antialiased;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 a { color: var(--primary); text-decoration: none; transition: color 0.15s ease; }
 a:hover { color: var(--primary-hover); text-decoration: underline; }
 
+/* Top Navigation */
 header.top-nav {
   position: sticky;
   top: 0;
-  z-index: 50;
-  backdrop-filter: blur(12px);
+  z-index: 100;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   background: var(--nav-bg);
   border-bottom: 1px solid var(--surface-border);
   padding: 14px 24px;
 }
 .nav-container {
-  max-width: 1040px;
+  max-width: 1180px;
   margin: 0 auto;
   display: flex;
   align-items: center;
@@ -74,27 +94,43 @@ header.top-nav {
   font-size: 20px;
   font-weight: 700;
   color: var(--text);
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
 }
-.brand span.accent {
-  color: var(--primary);
+.brand-icon {
+  width: 28px;
+  height: 28px;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 800;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.35);
+}
+.brand span.brand-accent {
+  background: linear-gradient(135deg, var(--text) 40%, var(--primary));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
 }
 .nav-badge {
   font-size: 11px;
   font-weight: 600;
-  background: rgba(16, 185, 129, 0.12);
+  background: var(--accent-emerald-bg);
   color: var(--accent-emerald);
   border: 1px solid rgba(16, 185, 129, 0.25);
   border-radius: 9999px;
   padding: 2px 8px;
+  letter-spacing: 0.02em;
 }
 .nav-links {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 24px;
 }
 .nav-links a {
   color: var(--text-muted);
@@ -118,6 +154,7 @@ header.top-nav {
   gap: 6px;
   font-weight: 500;
   margin: 0;
+  transition: all 0.15s ease;
 }
 .theme-toggle:hover {
   color: var(--text);
@@ -125,72 +162,78 @@ header.top-nav {
 }
 
 main {
-  max-width: 1040px;
+  max-width: 1180px;
   margin: 0 auto;
-  padding: 40px 20px 80px;
+  padding: 60px 24px 100px;
 }
 
+/* Hero Section */
 .hero {
   text-align: center;
-  padding: 40px 0 30px;
+  padding: 40px 0 60px;
+  max-width: 920px;
+  margin: 0 auto;
 }
 .badge-pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   font-size: 13px;
-  font-weight: 500;
-  background: rgba(37, 99, 235, 0.08);
+  font-weight: 600;
+  background: var(--primary-glow);
   color: var(--primary);
-  border: 1px solid rgba(37, 99, 235, 0.2);
-  padding: 5px 14px;
+  border: 1px solid rgba(37, 99, 235, 0.25);
+  padding: 6px 16px;
   border-radius: 9999px;
-  margin-bottom: 20px;
+  margin-bottom: 24px;
+  letter-spacing: 0.01em;
 }
 h1.hero-title {
-  font-size: clamp(32px, 5vw, 46px);
+  font-size: clamp(36px, 5.5vw, 60px);
   font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  margin: 0 0 16px;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+  margin: 0 0 20px;
   color: var(--text);
 }
 p.hero-sub {
-  font-size: 18px;
+  font-size: clamp(17px, 2.2vw, 20px);
   color: var(--text-muted);
-  max-width: 680px;
-  margin: 0 auto 28px;
-  line-height: 1.5;
+  max-width: 740px;
+  margin: 0 auto 34px;
+  line-height: 1.55;
+  font-weight: 400;
 }
 .hero-cta {
   display: flex;
   justify-content: center;
-  gap: 12px;
+  gap: 14px;
   flex-wrap: wrap;
-  margin-bottom: 24px;
+  margin-bottom: 28px;
 }
 button, a.btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
-  padding: 12px 22px;
-  border-radius: 9px;
+  padding: 13px 26px;
+  border-radius: 10px;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
   border: 1px solid transparent;
-  transition: all 0.15s ease;
+  transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
   text-decoration: none !important;
 }
 button.primary, a.btn.primary {
   background: var(--primary);
   color: #fff;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.25);
+  box-shadow: 0 4px 16px var(--primary-glow);
 }
 button.primary:hover, a.btn.primary:hover {
   background: var(--primary-hover);
-  transform: translateY(-1px);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px var(--primary-glow);
 }
 button.ghost, a.btn.ghost {
   background: var(--surface);
@@ -200,20 +243,329 @@ button.ghost, a.btn.ghost {
 button.ghost:hover, a.btn.ghost:hover {
   background: var(--surface-hover);
   border-color: var(--text-dim);
+  transform: translateY(-1px);
 }
 button.danger { background: #b91c1c; color: #fff; }
 
-.card {
+.clients-ribbon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 36px;
+  font-size: 13px;
+  color: var(--text-dim);
+}
+.client-badge {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  padding: 6px 14px;
+  border-radius: 9999px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+/* Interactive Terminal Simulation */
+.terminal-window {
+  max-width: 880px;
+  margin: 40px auto 0;
+  background: var(--terminal-bg);
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  box-shadow: 0 20px 40px -10px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+  text-align: left;
+}
+.terminal-header {
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid var(--surface-border);
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.terminal-dots {
+  display: flex;
+  gap: 7px;
+}
+.dot { width: 11px; height: 11px; border-radius: 50%; }
+.dot-red { background: #ef4444; }
+.dot-yellow { background: #f59e0b; }
+.dot-green { background: #10b981; }
+.terminal-title {
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #94a3b8;
+}
+.terminal-body {
+  padding: 24px 28px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 13.5px;
+  line-height: 1.7;
+  color: var(--terminal-text);
+  overflow-x: auto;
+}
+.t-cmd { color: #38bdf8; }
+.t-comment { color: #64748b; }
+.t-success { color: #34d399; font-weight: 600; }
+.t-accent { color: #f472b6; }
+
+/* Grid Sections */
+.section-title {
+  text-align: center;
+  margin: 100px 0 32px;
+}
+.section-title h2 {
+  font-size: clamp(28px, 4vw, 38px);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  color: var(--text);
+  margin: 0 0 10px;
+}
+.section-title p {
+  color: var(--text-muted);
+  font-size: 17px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.how-it-works-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 24px;
+  margin: 48px 0 80px;
+}
+.step-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  padding: 32px 28px;
+  box-shadow: var(--card-shadow);
+  transition: all 0.2s ease;
+  position: relative;
+  overflow: hidden;
+}
+.step-card:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--card-hover-shadow);
+  border-color: var(--primary);
+}
+.step-num {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-bottom: 14px;
+}
+.step-card h3 {
+  font-size: 20px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+.step-card p {
+  color: var(--text-muted);
+  font-size: 15px;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* Feature Pillars Grid */
+.features-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 20px;
+  margin: 40px 0;
+}
+.feature-box {
   background: var(--surface);
   border: 1px solid var(--surface-border);
   border-radius: 12px;
-  padding: 28px;
-  margin: 0 0 20px;
+  padding: 24px;
   box-shadow: var(--card-shadow);
 }
-.card h1 { font-size: 24px; margin: 0 0 10px; color: var(--text); }
-.card h2 { font-size: 18px; margin: 24px 0 10px; color: var(--text); }
-.card p.sub { color: var(--text-muted); font-size: 15px; margin: 0 0 16px; }
+.feature-box h4 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.feature-box p {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0;
+  line-height: 1.5;
+}
+
+/* Plans & Pricing */
+.plans {
+  display: grid;
+  gap: 24px;
+  margin: 40px 0;
+}
+@media (min-width: 820px) {
+  .plans { grid-template-columns: 1fr 1.08fr 1fr; align-items: stretch; }
+}
+.plan {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 16px;
+  padding: 36px 30px;
+  box-shadow: var(--card-shadow);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  transition: all 0.2s ease;
+}
+.plan:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--card-hover-shadow);
+}
+.plan.popular {
+  border-color: var(--popular-border);
+  background: var(--popular-bg);
+  box-shadow: var(--popular-glow);
+}
+.popular-badge {
+  position: absolute;
+  top: -13px;
+  right: 28px;
+  background: var(--primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  letter-spacing: 0.06em;
+  box-shadow: 0 2px 8px var(--primary-glow);
+}
+.plan h2 { margin: 0 0 8px; font-size: 22px; color: var(--text); font-weight: 700; }
+.plan .price {
+  font-size: 40px;
+  font-weight: 800;
+  margin: 16px 0 8px;
+  color: var(--text);
+  letter-spacing: -0.03em;
+}
+.plan .price span {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.plan p.plan-desc {
+  font-size: 14.5px;
+  color: var(--text-muted);
+  margin: 0 0 24px;
+  line-height: 1.5;
+}
+.plan ul.features-list {
+  list-style: none;
+  padding: 0;
+  margin: 24px 0 32px;
+  font-size: 14.5px;
+  color: var(--text-muted);
+  border-top: 1px solid var(--surface-border);
+  padding-top: 20px;
+}
+.plan ul.features-list li {
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.plan ul.features-list li::before {
+  content: "✓";
+  color: var(--accent-emerald);
+  font-weight: 800;
+  font-size: 15px;
+}
+
+/* FAQ Section */
+.faq-container {
+  max-width: 820px;
+  margin: 60px auto 40px;
+}
+.faq-card {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  padding: 24px 28px;
+  margin-bottom: 14px;
+  box-shadow: var(--card-shadow);
+}
+.faq-card h3 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0 0 8px;
+  color: var(--text);
+}
+.faq-card p {
+  color: var(--text-muted);
+  font-size: 14.5px;
+  margin: 0;
+  line-height: 1.6;
+}
+
+/* Trust Banner */
+.trust-banner {
+  background: var(--bg-subtle);
+  border: 1px solid var(--surface-border);
+  border-radius: 12px;
+  padding: 22px 28px;
+  margin-top: 40px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+/* Footer */
+footer {
+  border-top: 1px solid var(--surface-border);
+  background: var(--bg-subtle);
+  padding: 48px 24px;
+  margin-top: 80px;
+  color: var(--text-dim);
+  font-size: 14px;
+}
+.footer-container {
+  max-width: 1180px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 24px;
+}
+.footer-links {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.footer-links a {
+  color: var(--text-muted);
+}
+.footer-links a:hover {
+  color: var(--text);
+}
+
+/* Cards & Generic Layout */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  border-radius: 14px;
+  padding: 32px;
+  margin: 0 0 24px;
+  box-shadow: var(--card-shadow);
+}
+.card h1 { font-size: 26px; margin: 0 0 12px; color: var(--text); font-weight: 800; }
+.card h2 { font-size: 20px; margin: 24px 0 10px; color: var(--text); font-weight: 700; }
+.card p.sub { color: var(--text-muted); font-size: 15px; margin: 0 0 18px; }
 .muted { color: var(--text-dim); font-size: 13px; }
 .err { color: #dc2626; font-weight: 500; }
 .ok { color: #16a34a; font-weight: 500; }
@@ -221,10 +573,10 @@ button.danger { background: #b91c1c; color: #fff; }
 code, .mono {
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   font-size: 13px;
-  background: var(--bg-subtle);
-  border: 1px solid var(--surface-border);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
   border-radius: 6px;
-  padding: 2px 7px;
+  padding: 3px 8px;
   word-break: break-all;
   color: var(--text);
 }
@@ -244,187 +596,6 @@ input, select {
 input:focus, select:focus {
   border-color: var(--primary);
 }
-
-.section-title {
-  text-align: center;
-  margin: 60px 0 24px;
-}
-.section-title h2 {
-  font-size: 28px;
-  font-weight: 700;
-  color: var(--text);
-  margin: 0 0 8px;
-}
-.section-title p {
-  color: var(--text-muted);
-  font-size: 16px;
-  margin: 0;
-}
-
-.how-it-works-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 20px;
-  margin: 40px 0 60px;
-}
-.step-card {
-  background: var(--surface);
-  border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  padding: 24px;
-  box-shadow: var(--card-shadow);
-}
-.step-num {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--primary);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-bottom: 8px;
-}
-.step-card h3 {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 8px;
-  color: var(--text);
-}
-.step-card p {
-  color: var(--text-muted);
-  font-size: 14px;
-  margin: 0;
-  line-height: 1.5;
-}
-
-.plans {
-  display: grid;
-  gap: 20px;
-  margin: 24px 0;
-}
-@media (min-width: 768px) {
-  .plans { grid-template-columns: 1fr 1fr 1fr; }
-}
-.plan {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: space-between;
-}
-.plan.popular {
-  border-color: var(--popular-border);
-  background: var(--popular-bg);
-  box-shadow: 0 8px 24px rgba(37, 99, 235, 0.12);
-}
-.popular-badge {
-  position: absolute;
-  top: -12px;
-  right: 20px;
-  background: var(--primary);
-  color: #fff;
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  padding: 3px 10px;
-  border-radius: 9999px;
-  letter-spacing: 0.05em;
-}
-.plan h2 { margin: 0 0 8px; font-size: 20px; color: var(--text); }
-.plan .price {
-  font-size: 32px;
-  font-weight: 800;
-  margin: 12px 0 6px;
-  color: var(--text);
-}
-.plan .price span {
-  font-size: 15px;
-  font-weight: 400;
-  color: var(--text-muted);
-}
-.plan ul.features-list {
-  list-style: none;
-  padding: 0;
-  margin: 20px 0;
-  font-size: 14px;
-  color: var(--text-muted);
-}
-.plan ul.features-list li {
-  margin-bottom: 10px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.plan ul.features-list li::before {
-  content: "✓";
-  color: var(--accent-emerald);
-  font-weight: 700;
-}
-
-.faq-section {
-  max-width: 800px;
-  margin: 60px auto 40px;
-}
-.faq-item {
-  border-bottom: 1px solid var(--surface-border);
-  padding: 20px 0;
-}
-.faq-item h3 {
-  font-size: 17px;
-  font-weight: 600;
-  margin: 0 0 8px;
-  color: var(--text);
-}
-.faq-item p {
-  color: var(--text-muted);
-  font-size: 14px;
-  margin: 0;
-  line-height: 1.6;
-}
-
-.trust-banner {
-  background: var(--bg-subtle);
-  border: 1px solid var(--surface-border);
-  border-radius: 10px;
-  padding: 18px 20px;
-  margin-top: 30px;
-  text-align: center;
-  font-size: 13px;
-  color: var(--text-muted);
-}
-
-footer {
-  border-top: 1px solid var(--surface-border);
-  background: var(--bg-subtle);
-  padding: 40px 20px;
-  margin-top: 60px;
-  color: var(--text-dim);
-  font-size: 14px;
-}
-.footer-container {
-  max-width: 1040px;
-  margin: 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-}
-.footer-links {
-  display: flex;
-  gap: 20px;
-  flex-wrap: wrap;
-}
-.footer-links a {
-  color: var(--text-muted);
-}
-.footer-links a:hover {
-  color: var(--text);
-}
-table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 12px 0; }
-td, th { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--surface-border); vertical-align: top; }
-th { color: var(--text-muted); font-weight: 600; }
-.sev-critical { color: #dc2626; }
-.sev-high { color: #ea580c; }
-.sev-medium { color: #ca8a04; }
-.sev-low { color: #64748b; }
 `;
 
 export const CONTACT_EMAIL = "helmianlabs@gmail.com";
@@ -432,17 +603,19 @@ export const CONTACT_EMAIL = "helmianlabs@gmail.com";
 const NAV_BAR = `<header class="top-nav">
   <div class="nav-container">
     <a href="/" class="brand">
-      <span class="accent">Scribe</span>Mem
+      <div class="brand-icon">S</div>
+      <span><span class="brand-accent">Scribe</span>Mem</span>
       <span class="nav-badge">MCP Native</span>
     </a>
     <nav class="nav-links">
       <a href="/#how-it-works">How It Works</a>
+      <a href="/#features">Architecture</a>
       <a href="/pricing">Pricing</a>
       <a href="/getting-started">Docs</a>
       <a href="/login">Sign in</a>
       <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Toggle theme">🌓 <span id="theme-label">Theme</span></button>
       <form method="POST" action="/try" style="margin:0;display:inline">
-        <button type="submit" class="primary" style="padding:7px 14px;font-size:13px">Try Free</button>
+        <button type="submit" class="primary" style="padding:8px 16px;font-size:13.5px">Try Free</button>
       </form>
     </nav>
   </div>
@@ -452,7 +625,7 @@ const FOOTER = `<footer>
   <div class="footer-container">
     <div>
       <p style="margin:0 0 6px;color:var(--text);font-weight:600">Scribe Memory &bull; Operated by DairyForge LLC</p>
-      <p style="margin:0">Questions or support: <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>
+      <p style="margin:0">Universal Agentic Memory Infrastructure &bull; Contact: <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a></p>
     </div>
     <div class="footer-links">
       <a href="/pricing">Pricing</a>
@@ -537,47 +710,48 @@ export function installCommands(mcpUrl: string, token?: string): InstallCommands
 }
 
 export function tryPage(): string {
-  return layout("Try Scribe Memory — Instant AI Memory", `<div class="card" style="max-width:620px;margin:40px auto;text-align:center">
+  return layout("Try Scribe Memory — Instant AI Memory", `<div class="card" style="max-width:680px;margin:40px auto;text-align:center">
+    <div class="badge-pill">Zero Setup &bull; Instant Guest Memory</div>
     <h1>Try Scribe Memory in Seconds</h1>
-    <p class="sub">No email, no password. We'll create a private memory for you and show the one-line install for Claude, ChatGPT and Cursor.</p>
+    <p class="sub">No email, no password, no credit card. We'll generate your dedicated MCP memory stream URL instantly so you can test it with Claude Code, Cursor, or ChatGPT.</p>
     <form method="POST" action="/try">
-      <button type="submit" class="primary" style="font-size:16px;padding:14px 28px">Create my memory</button>
+      <button type="submit" class="primary" style="font-size:16px;padding:15px 32px">Create my memory</button>
     </form>
-    <p class="muted" style="margin-top:20px">Free tier: 1,000 memories and 500 calls a day. You can sign in with email later to keep this memory.</p>
+    <p class="muted" style="margin-top:24px">Free tier: 1,000 memories and 500 calls a day. You can sign in with email later to keep this memory.</p>
   </div>`);
 }
 
 export function tryReadyPage(o: { mcpUrl: string; token: string; expiresIn: number; install: InstallCommands }): string {
   const days = Math.round(o.expiresIn / 86400);
-  return layout("Your Scribe Memory is ready", `<div class="card" style="max-width:760px;margin:30px auto">
+  return layout("Your Scribe Memory is ready", `<div class="card" style="max-width:820px;margin:30px auto">
     <div class="badge-pill">✓ Memory Ready</div>
     <h1>Your memory is ready</h1>
     <p class="sub">This address is yours alone. Copy the one-line command, or paste the address into Claude, ChatGPT or Cursor.</p>
     
-    <div style="margin:20px 0">
-      <label style="font-size:13px;font-weight:600;color:var(--text-muted)">Memory address</label>
-      <p style="margin-top:4px"><code>${esc(o.mcpUrl)}</code></p>
+    <div style="margin:24px 0">
+      <label style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Dedicated MCP Stream URL</label>
+      <p style="margin-top:6px"><code>${esc(o.mcpUrl)}</code></p>
     </div>
 
-    <div style="margin:20px 0">
-      <label style="font-size:13px;font-weight:600;color:var(--text-muted)">One-line install (Claude Code)</label>
-      <p style="margin-top:4px"><code>${esc(o.install.one_line)}</code></p>
+    <div style="margin:24px 0">
+      <label style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">One-Line Install (Claude Code CLI)</label>
+      <p style="margin-top:6px"><code>${esc(o.install.one_line)}</code></p>
     </div>
 
-    <div style="margin:20px 0">
-      <label style="font-size:13px;font-weight:600;color:var(--text-muted)">Cursor (~/.cursor/mcp.json)</label>
-      <pre class="mono" style="white-space:pre-wrap;padding:14px;display:block;margin-top:4px">${esc(o.install.cursor_json)}</pre>
+    <div style="margin:24px 0">
+      <label style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Cursor Configuration (~/.cursor/mcp.json)</label>
+      <pre class="mono" style="white-space:pre-wrap;padding:16px;display:block;margin-top:6px;border-radius:8px">${esc(o.install.cursor_json)}</pre>
     </div>
 
-    <div style="margin:20px 0;background:var(--bg-subtle);border:1px solid var(--surface-border);border-radius:8px;padding:16px">
-      <p style="margin:0 0 6px;font-weight:600;font-size:14px;color:var(--text)">Desktop Connectors</p>
-      <p class="muted" style="margin:0 0 6px">${esc(o.install.claude)}</p>
+    <div style="margin:24px 0;background:var(--bg-subtle);border:1px solid var(--surface-border);border-radius:10px;padding:20px">
+      <p style="margin:0 0 8px;font-weight:700;font-size:14px;color:var(--text)">Desktop Connectors</p>
+      <p class="muted" style="margin:0 0 8px">${esc(o.install.claude)}</p>
       <p class="muted" style="margin:0">${esc(o.install.chatgpt)}</p>
     </div>
 
     <p class="muted">The temporary access token lasts ${days} days. After that, open <a href="/dashboard">your dashboard</a> and approve the connection.</p>
     <p class="err" style="font-size:13px">Treat the token like a password. Anyone with it can read and write this memory.</p>
-    <div style="margin-top:24px">
+    <div style="margin-top:28px">
       <a href="/dashboard" class="btn primary">Open the dashboard</a>
     </div>
   </div>`);
@@ -668,17 +842,17 @@ export function paddlePayPage(opts: { token: string; environment: "sandbox" | "p
 }
 
 export const PLANS_HTML = `<div class="plans" id="plans">
-  <div class="card plan">
+  <div class="plan">
     <div>
       <h2>Free</h2>
       <p class="price">$0</p>
-      <p class="sub">1,000 memories and 500 calls a day. Try it with no account.</p>
+      <p class="plan-desc">1,000 memories and 500 calls a day. Try it with no account.</p>
       <p class="muted">A private memory for the AIs you already use.</p>
       <ul class="features-list">
-        <li>1,000 memories limit</li>
+        <li>1,000 memories storage</li>
         <li>500 calls a day</li>
         <li>Connect Claude, ChatGPT and Cursor</li>
-        <li>Automatic secret scrubbing</li>
+        <li>Automatic secret & key scrubbing</li>
       </ul>
     </div>
     <form method="POST" action="/try">
@@ -686,34 +860,35 @@ export const PLANS_HTML = `<div class="plans" id="plans">
     </form>
   </div>
 
-  <div class="card plan popular">
+  <div class="plan popular">
     <div class="popular-badge">Most Popular</div>
     <div>
       <h2>Personal</h2>
       <p class="price">$8 <span>/ month</span></p>
-      <p class="sub">Or $80 a year. Unlimited memories for one person.</p>
+      <p class="plan-desc">Or $80 a year. Unlimited memories for one person.</p>
       <p class="muted">One memory every AI you connect can read and write.</p>
       <ul class="features-list">
-        <li>Unlimited memories</li>
-        <li>Full semantic search & recall</li>
+        <li>Unlimited memories & storage</li>
+        <li>10,000 calls / day per user</li>
+        <li>Full semantic search & vector recall</li>
         <li>Import chat history from Claude & ChatGPT</li>
-        <li>Export your memories anytime</li>
+        <li>Automated Librarian categorization</li>
       </ul>
     </div>
     <a href="/login" class="btn primary" style="width:100%">Choose Personal</a>
   </div>
 
-  <div class="card plan">
+  <div class="plan">
     <div>
       <h2>Team</h2>
       <p class="price">$15 <span>/ seat / month</span></p>
-      <p class="sub">Unlimited memories, billed per seat.</p>
+      <p class="plan-desc">Unlimited memories, billed per seat.</p>
       <p class="muted">A shared memory for a crew and their AIs.</p>
       <ul class="features-list">
         <li>Everything in Personal</li>
         <li>Shared team knowledge graph</li>
-        <li>Centralized billing via Paddle</li>
-        <li>Cross-assistant coordination</li>
+        <li>Role-based access & team API keys</li>
+        <li>Centralized Paddle invoicing</li>
       </ul>
     </div>
     <a href="/login" class="btn ghost" style="width:100%">Choose Team</a>
@@ -724,7 +899,7 @@ export function homePage(): string {
   return layout("Scribe Memory", `
     <div class="hero">
       <div class="badge-pill">
-        <span>⚡</span> Scribe Memory &bull; Model Context Protocol Native
+        <span>⚡</span> Model Context Protocol &bull; Universal Memory Layer
       </div>
       <h1 class="hero-title">One memory every AI you use can read and write</h1>
       <p class="hero-sub">
@@ -732,35 +907,86 @@ export function homePage(): string {
       </p>
       <div class="hero-cta">
         <form method="POST" action="/try" style="margin:0">
-          <button type="submit" class="primary" style="font-size:16px;padding:14px 28px">Try without signing up</button>
+          <button type="submit" class="primary" style="font-size:16px;padding:15px 32px">Try without signing up</button>
         </form>
-        <a href="/login" class="btn ghost" style="font-size:16px;padding:14px 24px">Sign in</a>
+        <a href="/login" class="btn ghost" style="font-size:16px;padding:15px 28px">Sign in</a>
       </div>
-      <p class="muted" style="margin-top:16px">
-        Scribe Memory is a hosted memory service for AI assistants, operated by DairyForge LLC. Your memory is private to your account and walled off from everyone else. Questions or support: <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.
-      </p>
+      
+      <div class="clients-ribbon">
+        <span>Native MCP compatibility with:</span>
+        <span class="client-badge">Claude Code</span>
+        <span class="client-badge">Cursor IDE</span>
+        <span class="client-badge">Claude Desktop</span>
+        <span class="client-badge">ChatGPT Connectors</span>
+        <span class="client-badge">Gemini CLI</span>
+      </div>
+
+      <div class="terminal-window">
+        <div class="terminal-header">
+          <div class="terminal-dots">
+            <div class="dot dot-red"></div>
+            <div class="dot dot-yellow"></div>
+            <div class="dot dot-green"></div>
+          </div>
+          <div class="terminal-title">bash &mdash; 80x24</div>
+          <div style="width:40px"></div>
+        </div>
+        <div class="terminal-body">
+          <div><span class="t-comment"># 1. Connect Scribe Memory to your coding agent in one command</span></div>
+          <div><span class="t-cmd">$ claude mcp add scribemem https://scribemem.helmian.cloud/mcp/usr_94a2b</span></div>
+          <div style="margin-top:10px"><span class="t-comment"># 2. Work in Cursor, Claude, or ChatGPT &mdash; context is indexed automatically</span></div>
+          <div>&gt; Claude: <span class="t-accent">"Decision: Using Neon Postgres with RLS for multi-tenant isolation."</span></div>
+          <div><span class="t-success">&check; Saved to Scribe Memory</span> <span class="t-comment">(filed to #architecture &bull; 0.014s &bull; secrets scrubbed)</span></div>
+          <div style="margin-top:10px"><span class="t-comment"># 3. Open Cursor in a new session &mdash; past architecture is already recalled</span></div>
+          <div>&gt; Cursor: <span class="t-accent">"Found existing architecture note: Neon Postgres with RLS. Writing migration..."</span></div>
+        </div>
+      </div>
     </div>
 
     <div class="section-title" id="how-it-works">
       <h2>How It Works</h2>
-      <p>Three steps to a unified memory across your AI assistants.</p>
+      <p>Three steps to a unified memory across your AI assistants and coding agents.</p>
     </div>
 
     <div class="how-it-works-grid">
       <div class="step-card">
-        <div class="step-num">Step 1</div>
+        <div class="step-num">Step 01</div>
         <h3>Connect your AIs over MCP</h3>
-        <p>Paste your private Scribe Memory address into Claude, ChatGPT, or Cursor as an MCP connector. Setup takes 30 seconds with no complex configuration.</p>
+        <p>Paste your private Scribe Memory address into Claude, ChatGPT, or Cursor as an MCP connector. Setup takes 30 seconds with zero server configuration.</p>
       </div>
       <div class="step-card">
-        <div class="step-num">Step 2</div>
+        <div class="step-num">Step 02</div>
         <h3>They save what they learn</h3>
         <p>Whenever an assistant solves a problem, discovers project patterns, or receives your preferences, it automatically saves the memory to your private bank.</p>
       </div>
       <div class="step-card">
-        <div class="step-num">Step 3</div>
+        <div class="step-num">Step 03</div>
         <h3>Any of them can recall it</h3>
         <p>Switch between Claude Code, Cursor, and ChatGPT freely. Any assistant recalls past memories instantly via semantic search without repeated prompting.</p>
+      </div>
+    </div>
+
+    <div class="section-title" id="features">
+      <h2>Built for Real Development Fleets</h2>
+      <p>Enterprise-grade security, automatic organization, and dramatic token reductions.</p>
+    </div>
+
+    <div class="features-grid">
+      <div class="feature-box">
+        <h4>🔌 Zero-Config MCP Endpoint</h4>
+        <p>Standard HTTPS Server-Sent Events (SSE) stream. No local Docker containers or self-hosted maintenance.</p>
+      </div>
+      <div class="feature-box">
+        <h4>🧠 Automated Librarian & Graph</h4>
+        <p>Automatically deduplicates, tags, and organizes memories into an interconnected knowledge graph.</p>
+      </div>
+      <div class="feature-box">
+        <h4>📉 94% Token Savings</h4>
+        <p>Pull exact relevant memories on demand instead of wasting thousands of prompt tokens on static rule files.</p>
+      </div>
+      <div class="feature-box">
+        <h4>🛡️ Zero-Leak Secret Scrubbing</h4>
+        <p>API keys, passwords, bearer tokens, and private credentials are automatically redacted before saving.</p>
       </div>
     </div>
 
@@ -772,27 +998,29 @@ export function homePage(): string {
     ${PLANS_HTML}
 
     <div class="trust-banner">
-      <p style="margin:0 0 6px">
+      <p style="margin:0 0 8px">
         Prices are in US dollars. Paid plans are billed by <a href="https://www.paddle.com" target="_blank" rel="noopener"><b>Paddle.com</b></a>, the merchant of record. Paddle handles payments, taxes and refunds.
       </p>
       <p style="margin:0">
-        See <a href="/refunds">Refunds</a> for the <b>14-day refund window</b>.
+        See <a href="/refunds">Refunds</a> for the <b>14-day refund window</b>. Operated by <b>DairyForge LLC</b>. Questions: <a href="mailto:${CONTACT_EMAIL}">${CONTACT_EMAIL}</a>.
       </p>
     </div>
 
-    <div class="faq-section">
-      <div class="section-title" style="margin:40px 0 20px">
-        <h2>Frequently Asked Questions</h2>
-      </div>
-      <div class="faq-item">
+    <div class="section-title" style="margin-top:80px">
+      <h2>Frequently Asked Questions</h2>
+      <p>Everything you need to know about privacy, compatibility, and billing.</p>
+    </div>
+
+    <div class="faq-container">
+      <div class="faq-card">
         <h3>Is my data private?</h3>
         <p>Yes. Your memory is private to your account and walled off from everyone else. Secrets, API keys, and sensitive tokens are automatically scrubbed before anything is stored.</p>
       </div>
-      <div class="faq-item">
+      <div class="faq-card">
         <h3>Which AIs work with Scribe Memory?</h3>
         <p>Any client or assistant that supports the Model Context Protocol (MCP) or custom connectors, including Claude Code, Cursor, Claude Desktop, ChatGPT, and Gemini CLI.</p>
       </div>
-      <div class="faq-item">
+      <div class="faq-card">
         <h3>Can I cancel or get a refund?</h3>
         <p>You can cancel your subscription anytime from your dashboard. Paid plans include an unconditional 14-day refund window processed through Paddle.com.</p>
       </div>
@@ -810,7 +1038,7 @@ export function pricingPage(): string {
 
     ${PLANS_HTML}
 
-    <div class="card" style="max-width:840px;margin:40px auto">
+    <div class="card" style="max-width:880px;margin:40px auto">
       <h2 style="margin-top:0">Billing & Guarantee</h2>
       <p>Paid checkout is billed by <a href="https://www.paddle.com" target="_blank" rel="noopener"><b>Paddle.com</b></a>, the merchant of record. Paddle handles payments, taxes and refunds.</p>
       <p>Personal is <b>$8</b> a month, or <b>$80</b> a year. Team is <b>$15</b> per seat per month (<b>$15 per seat</b>). The Free plan is <b>$0</b>, with a limit of <b>1,000 memories</b>.</p>
@@ -822,7 +1050,7 @@ export function pricingPage(): string {
 }
 
 export function termsPage(): string {
-  return layout("Terms of Service — Scribe Memory", `<div class="card" style="max-width:840px;margin:30px auto">
+  return layout("Terms of Service — Scribe Memory", `<div class="card" style="max-width:880px;margin:30px auto">
     <div class="badge-pill">Legal</div>
     <h1>Terms of Service</h1>
     <p class="muted">Effective date: November 27, 2026</p>
@@ -840,7 +1068,7 @@ export function termsPage(): string {
 }
 
 export function privacyPage(): string {
-  return layout("Privacy Policy — Scribe Memory", `<div class="card" style="max-width:840px;margin:30px auto">
+  return layout("Privacy Policy — Scribe Memory", `<div class="card" style="max-width:880px;margin:30px auto">
     <div class="badge-pill">Privacy</div>
     <h1>Privacy Policy</h1>
     <p class="muted">Effective date: November 27, 2026</p>
@@ -858,7 +1086,7 @@ export function privacyPage(): string {
 }
 
 export function refundsPage(): string {
-  return layout("Refund Policy — Scribe Memory", `<div class="card" style="max-width:840px;margin:30px auto">
+  return layout("Refund Policy — Scribe Memory", `<div class="card" style="max-width:880px;margin:30px auto">
     <div class="badge-pill">Refunds</div>
     <h1>Refund Policy</h1>
     <p class="muted">Effective date: November 27, 2026</p>
