@@ -1,6 +1,14 @@
 /** Server-rendered pages (no inline scripts; CSP script-src 'self'). */
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
+const ICONS = {
+  plug: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v6"/><path d="m19 13-4-4"/><path d="M10 2v6"/><path d="M8 8a6 6 0 0 0 6 6l4-4a6 6 0 0 0-6-6"/><path d="m2 22 7-7"/></svg>`,
+  brain: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M12 5v13"/></svg>`,
+  chart: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m3 3 7 7 4-4 7 7"/><path d="M14 7h7v7"/></svg>`,
+  shield: `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg>`,
+  sparkles: `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 3-1.912 5.813a2 2 0 0 1-1.275 1.275L3 12l5.813 1.912a2 2 0 0 1 1.275 1.275L12 21l1.912-5.813a2 2 0 0 1 1.275-1.275L21 12l-5.813-1.912a2 2 0 0 1-1.275-1.275L12 3Z"/></svg>`
+};
+
 const CSS = `:root {
   --bg: #ffffff;
   --bg-subtle: #f8fafc;
@@ -17,6 +25,8 @@ const CSS = `:root {
   --accent-cyan: #0284c7;
   --accent-emerald: #059669;
   --accent-emerald-bg: rgba(5, 150, 105, 0.1);
+  --icon-well-bg: rgba(37, 99, 235, 0.08);
+  --icon-well-border: rgba(37, 99, 235, 0.2);
   --code-bg: #f8fafc;
   --code-border: #e2e8f0;
   --terminal-bg: #0b0f19;
@@ -46,6 +56,8 @@ const CSS = `:root {
   --accent-cyan: #38bdf8;
   --accent-emerald: #10b981;
   --accent-emerald-bg: rgba(16, 185, 129, 0.12);
+  --icon-well-bg: rgba(59, 130, 246, 0.12);
+  --icon-well-border: rgba(59, 130, 246, 0.25);
   --code-bg: #090d16;
   --code-border: #1e2638;
   --terminal-bg: #070a12;
@@ -373,22 +385,40 @@ button.danger { background: #b91c1c; color: #fff; }
   line-height: 1.6;
 }
 
-/* Feature Pillars Grid */
+/* Feature Pillars Grid with Sleek SVG Icon Wells */
 .features-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
-  gap: 20px;
+  gap: 24px;
   margin: 40px 0;
 }
 .feature-box {
   background: var(--surface);
   border: 1px solid var(--surface-border);
-  border-radius: 12px;
-  padding: 24px;
+  border-radius: 14px;
+  padding: 28px 24px;
   box-shadow: var(--card-shadow);
+  transition: all 0.2s ease;
+}
+.feature-box:hover {
+  transform: translateY(-3px);
+  box-shadow: var(--card-hover-shadow);
+  border-color: var(--primary);
+}
+.icon-well {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  background: var(--icon-well-bg);
+  border: 1px solid var(--icon-well-border);
+  color: var(--primary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
 }
 .feature-box h4 {
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 700;
   margin: 0 0 8px;
   color: var(--text);
@@ -397,7 +427,7 @@ button.danger { background: #b91c1c; color: #fff; }
   font-size: 14px;
   color: var(--text-muted);
   margin: 0;
-  line-height: 1.5;
+  line-height: 1.55;
 }
 
 /* Plans & Pricing */
@@ -711,7 +741,7 @@ export function installCommands(mcpUrl: string, token?: string): InstallCommands
 
 export function tryPage(): string {
   return layout("Try Scribe Memory — Instant AI Memory", `<div class="card" style="max-width:680px;margin:40px auto;text-align:center">
-    <div class="badge-pill">Zero Setup &bull; Instant Guest Memory</div>
+    <div class="badge-pill">${ICONS.sparkles} Zero Setup &bull; Instant Guest Memory</div>
     <h1>Try Scribe Memory in Seconds</h1>
     <p class="sub">No email, no password, no credit card. We'll generate your dedicated MCP memory stream URL instantly so you can test it with Claude Code, Cursor, or ChatGPT.</p>
     <form method="POST" action="/try">
@@ -723,36 +753,74 @@ export function tryPage(): string {
 
 export function tryReadyPage(o: { mcpUrl: string; token: string; expiresIn: number; install: InstallCommands }): string {
   const days = Math.round(o.expiresIn / 86400);
-  return layout("Your Scribe Memory is ready", `<div class="card" style="max-width:820px;margin:30px auto">
-    <div class="badge-pill">✓ Memory Ready</div>
-    <h1>Your memory is ready</h1>
-    <p class="sub">This address is yours alone. Copy the one-line command, or paste the address into Claude, ChatGPT or Cursor.</p>
-    
-    <div style="margin:24px 0">
-      <label style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Dedicated MCP Stream URL</label>
-      <p style="margin-top:6px"><code>${esc(o.mcpUrl)}</code></p>
+  const cursorConfig = JSON.stringify({ url: o.mcpUrl, headers: { Authorization: `Bearer ${o.token}` } });
+  const cursorB64 = Buffer.from(cursorConfig).toString("base64");
+  const cursorDeepLink = `cursor://anysphere.cursor-deeplink/mcp/install?name=scribemem&config=${encodeURIComponent(cursorB64)}`;
+
+  return layout("Your Scribe Memory is ready", `<div class="card" style="max-width:880px;margin:30px auto">
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;margin-bottom:20px">
+      <div class="badge-pill" style="margin:0">${ICONS.sparkles} Memory Provisioned &bull; Active</div>
+      <a href="/dashboard" class="btn ghost" style="padding:7px 16px;font-size:13px">Open Dashboard &rarr;</a>
+    </div>
+    <h1 style="margin:0 0 8px">Your Scribe Memory Is Live</h1>
+    <p class="sub" style="margin-bottom:28px">Connect it to your AI tools below in one click or with a single copyable command.</p>
+
+    <!-- Client Tabs Container -->
+    <div class="tabs-container" style="background:var(--bg-subtle);border:1px solid var(--surface-border);border-radius:14px;padding:24px">
+      <div class="tabs-header" style="display:flex;gap:8px;border-bottom:1px solid var(--surface-border);padding-bottom:16px;margin-bottom:20px;overflow-x:auto">
+        <button type="button" class="tab-btn active" data-tab="tab-cursor" style="padding:8px 16px;font-size:13.5px;border-radius:8px">Cursor IDE</button>
+        <button type="button" class="tab-btn" data-tab="tab-claude" style="padding:8px 16px;font-size:13.5px;border-radius:8px">Claude Code CLI</button>
+        <button type="button" class="tab-btn" data-tab="tab-desktop" style="padding:8px 16px;font-size:13.5px;border-radius:8px">Claude Desktop & ChatGPT</button>
+      </div>
+
+      <!-- Tab 1: Cursor IDE -->
+      <div class="tab-pane" id="tab-cursor" style="display:block">
+        <h3 style="margin:0 0 6px;font-size:17px">Add to Cursor with One Click</h3>
+        <p class="muted" style="margin-bottom:18px">Click the button below to launch Cursor and automatically configure ScribeMem into your IDE.</p>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:20px">
+          <a href="${cursorDeepLink}" class="btn primary" style="font-size:15px;padding:12px 24px">
+            ⚡ Install to Cursor in 1 Click
+          </a>
+          <button type="button" class="btn ghost copy-btn" data-copy="${esc(o.install.cursor_json)}" style="font-size:13px;padding:11px 18px">
+            Copy Cursor JSON
+          </button>
+        </div>
+        <details style="margin-top:16px">
+          <summary style="font-size:13px;color:var(--text-muted);cursor:pointer">Or view manual configuration snippet (~/.cursor/mcp.json)</summary>
+          <pre class="mono" style="white-space:pre-wrap;padding:16px;display:block;margin-top:10px;border-radius:8px">${esc(o.install.cursor_json)}</pre>
+        </details>
+      </div>
+
+      <!-- Tab 2: Claude Code CLI -->
+      <div class="tab-pane" id="tab-claude" style="display:none">
+        <h3 style="margin:0 0 6px;font-size:17px">Run in Claude Code Terminal</h3>
+        <p class="muted" style="margin-bottom:14px">Paste this single command into your terminal to link ScribeMem to Claude Code:</p>
+        <div style="position:relative;margin-bottom:16px">
+          <pre class="mono" style="white-space:pre-wrap;padding:16px;display:block;border-radius:8px;padding-right:100px">${esc(o.install.one_line)}</pre>
+          <button type="button" class="btn ghost copy-btn" data-copy="${esc(o.install.one_line)}" style="position:absolute;right:10px;top:10px;padding:6px 14px;font-size:12px">Copy</button>
+        </div>
+        <p class="muted" style="font-size:13px">Claude will immediately remember architecture, decisions, and instructions across sessions.</p>
+      </div>
+
+      <!-- Tab 3: Desktop & Connectors -->
+      <div class="tab-pane" id="tab-desktop" style="display:none">
+        <h3 style="margin:0 0 6px;font-size:17px">Connect Claude Desktop or ChatGPT</h3>
+        <p class="muted" style="margin-bottom:14px">Your dedicated HTTPS MCP stream address:</p>
+        <div style="position:relative;margin-bottom:20px">
+          <code style="padding:14px;display:block;padding-right:100px;font-size:13px">${esc(o.mcpUrl)}</code>
+          <button type="button" class="btn ghost copy-btn" data-copy="${esc(o.mcpUrl)}" style="position:absolute;right:8px;top:8px;padding:6px 14px;font-size:12px">Copy URL</button>
+        </div>
+        <div style="background:var(--surface);border:1px solid var(--surface-border);border-radius:10px;padding:16px">
+          <p style="margin:0 0 6px;font-size:13.5px;color:var(--text);font-weight:600">Quick Setup Instructions:</p>
+          <p class="muted" style="margin:0 0 8px">${esc(o.install.claude)}</p>
+          <p class="muted" style="margin:0">${esc(o.install.chatgpt)}</p>
+        </div>
+      </div>
     </div>
 
-    <div style="margin:24px 0">
-      <label style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">One-Line Install (Claude Code CLI)</label>
-      <p style="margin-top:6px"><code>${esc(o.install.one_line)}</code></p>
-    </div>
-
-    <div style="margin:24px 0">
-      <label style="font-size:13px;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em">Cursor Configuration (~/.cursor/mcp.json)</label>
-      <pre class="mono" style="white-space:pre-wrap;padding:16px;display:block;margin-top:6px;border-radius:8px">${esc(o.install.cursor_json)}</pre>
-    </div>
-
-    <div style="margin:24px 0;background:var(--bg-subtle);border:1px solid var(--surface-border);border-radius:10px;padding:20px">
-      <p style="margin:0 0 8px;font-weight:700;font-size:14px;color:var(--text)">Desktop Connectors</p>
-      <p class="muted" style="margin:0 0 8px">${esc(o.install.claude)}</p>
-      <p class="muted" style="margin:0">${esc(o.install.chatgpt)}</p>
-    </div>
-
-    <p class="muted">The temporary access token lasts ${days} days. After that, open <a href="/dashboard">your dashboard</a> and approve the connection.</p>
-    <p class="err" style="font-size:13px">Treat the token like a password. Anyone with it can read and write this memory.</p>
-    <div style="margin-top:28px">
-      <a href="/dashboard" class="btn primary">Open the dashboard</a>
+    <div style="margin-top:28px;padding-top:20px;border-top:1px solid var(--surface-border);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px">
+      <p class="muted" style="margin:0;font-size:13px">Guest token active for ${days} days. Link an email anytime in your dashboard to keep this memory permanently.</p>
+      <a href="/dashboard" class="btn primary" style="padding:10px 20px;font-size:14px">Go to Dashboard</a>
     </div>
   </div>`);
 }
@@ -899,7 +967,7 @@ export function homePage(): string {
   return layout("Scribe Memory", `
     <div class="hero">
       <div class="badge-pill">
-        <span>⚡</span> Model Context Protocol &bull; Universal Memory Layer
+        ${ICONS.sparkles} Model Context Protocol &bull; Universal Memory Layer
       </div>
       <h1 class="hero-title">One memory every AI you use can read and write</h1>
       <p class="hero-sub">
@@ -973,19 +1041,23 @@ export function homePage(): string {
 
     <div class="features-grid">
       <div class="feature-box">
-        <h4>🔌 Zero-Config MCP Endpoint</h4>
+        <div class="icon-well">${ICONS.plug}</div>
+        <h4>Zero-Config MCP Endpoint</h4>
         <p>Standard HTTPS Server-Sent Events (SSE) stream. No local Docker containers or self-hosted maintenance.</p>
       </div>
       <div class="feature-box">
-        <h4>🧠 Automated Librarian & Graph</h4>
+        <div class="icon-well">${ICONS.brain}</div>
+        <h4>Automated Librarian & Graph</h4>
         <p>Automatically deduplicates, tags, and organizes memories into an interconnected knowledge graph.</p>
       </div>
       <div class="feature-box">
-        <h4>📉 94% Token Savings</h4>
+        <div class="icon-well">${ICONS.chart}</div>
+        <h4>94% Token Savings</h4>
         <p>Pull exact relevant memories on demand instead of wasting thousands of prompt tokens on static rule files.</p>
       </div>
       <div class="feature-box">
-        <h4>🛡️ Zero-Leak Secret Scrubbing</h4>
+        <div class="icon-well">${ICONS.shield}</div>
+        <h4>Zero-Leak Secret Scrubbing</h4>
         <p>API keys, passwords, bearer tokens, and private credentials are automatically redacted before saving.</p>
       </div>
     </div>
@@ -1123,6 +1195,34 @@ export const THEME_JS = `(() => {
         sync(next);
       };
     }
+
+    // Tabs switcher
+    document.querySelectorAll('.tab-btn').forEach(b => {
+      b.onclick = () => {
+        const tabId = b.getAttribute('data-tab');
+        const container = b.closest('.tabs-container');
+        if (!container) return;
+        container.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+        container.querySelectorAll('.tab-pane').forEach(el => el.style.display = 'none');
+        b.classList.add('active');
+        const target = container.querySelector('#' + tabId);
+        if (target) target.style.display = 'block';
+      };
+    });
+
+    // Copy buttons
+    document.querySelectorAll('.copy-btn').forEach(b => {
+      b.onclick = () => {
+        const text = b.getAttribute('data-copy');
+        if (!text) return;
+        navigator.clipboard.writeText(text).then(() => {
+          const orig = b.textContent;
+          b.textContent = 'Copied!';
+          b.style.borderColor = 'var(--accent-emerald)';
+          setTimeout(() => { b.textContent = orig; b.style.borderColor = ''; }, 2000);
+        });
+      };
+    });
   }
 
   if (document.readyState === 'loading') {
@@ -1164,17 +1264,26 @@ async function load() {
   const flags = (await api('/api/flags?limit=10')).flags || [];
   const keys = (await api('/api/keys')).keys || [];
   app.innerHTML = '';
-  app.append($('<div class="card"><h1>' + esc(t.name) + '</h1><p class="sub">Signed in as ' + esc(me.user.email) + ' · <a href="/logout">Sign out</a></p>' +
-    '<h2>Your memory address</h2><p>Paste this into Claude, ChatGPT, Grok, Gemini or your coding tools as a custom connector:</p><p><code>' + esc(me.mcp_url) + '</code></p>' +
-    '<p class="muted">The AI app will open a page here asking you to approve. That is the only step.</p></div>'));
+  app.append($('<div class="card"><div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px">' +
+    '<div><div class="badge-pill" style="margin-bottom:8px">Active Workspace</div><h1 style="margin:0 0 4px">' + esc(t.name) + '</h1><p class="muted" style="margin:0">Signed in as <b>' + esc(me.user.email) + '</b></p></div>' +
+    '<div><a href="/logout" class="btn ghost" style="padding:7px 16px;font-size:13px">Sign out</a></div></div>' +
+    '<h2 style="margin-top:28px">Your Dedicated Memory Stream</h2><p class="muted">Connect this HTTPS stream endpoint to Claude, Cursor, ChatGPT, or your AI coding agents:</p>' +
+    '<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:12px 0">' +
+    '<code style="padding:10px 14px;flex-grow:1;font-size:13.5px">' + esc(me.mcp_url) + '</code>' +
+    '<button class="btn ghost copy-btn" data-copy="' + esc(me.mcp_url) + '" style="margin:0;padding:9px 18px;font-size:13px">Copy URL</button>' +
+    '</div><p class="muted" style="font-size:13px">When your AI assistant requests authorization, click Approve to link your memory workspace.</p></div>'));
+  const memPct = p.maxMemories ? Math.min(100, Math.round((u.memories / p.maxMemories) * 100)) : 10;
+  const callPct = Math.min(100, Math.round((u.calls_today / p.maxCallsPerDay) * 100));
   app.append($('<div class="card"><h2>Plan: ' + esc(p.name) + (t.plan_status !== 'active' ? ' (' + esc(t.plan_status) + ')' : '') + '</h2>' +
-    '<p>' + u.memories.toLocaleString() + (p.maxMemories === null ? ' memories (no limit)' : ' of ' + p.maxMemories.toLocaleString() + ' memories') + ' · ' + mb(u.bytes) + ' of ' + mb(p.maxBytes) + ' stored</p>' +
-    '<p>' + u.calls_today.toLocaleString() + ' of ' + p.maxCallsPerDay.toLocaleString() + ' calls today (resets at midnight UTC)</p>' +
-    (me.tenant.plan === 'free' ? '<button class="primary" data-plan="personal" data-interval="month">Personal $' + me.plans.personal.priceUsdMonthly + '/month</button><button class="ghost" data-plan="personal" data-interval="year">Personal $' + me.plans.personal.priceUsdYearly + '/year</button>' +
-      '<p style="margin-top:14px">Team, $' + me.plans.team.priceUsdMonthly + ' per seat per month: <input id="seats" type="number" min="1" max="' + me.max_seats + '" value="2" style="width:80px;display:inline-block"> seats <button class="ghost" data-plan="team" data-interval="month">Choose Team</button></p>' : '') +
+    '<div style="margin:16px 0 6px"><span style="font-weight:600;font-size:14px">Memories Stored</span> <span class="muted">(' + u.memories.toLocaleString() + (p.maxMemories === null ? ' memories' : ' of ' + p.maxMemories.toLocaleString()) + ' &bull; ' + mb(u.bytes) + ' of ' + mb(p.maxBytes) + ')</span></div>' +
+    '<div style="background:var(--surface-border);height:7px;border-radius:4px;overflow:hidden;margin-bottom:14px"><div style="background:var(--primary);width:' + memPct + '%;height:100%"></div></div>' +
+    '<div style="margin:16px 0 6px"><span style="font-weight:600;font-size:14px">Daily API Calls</span> <span class="muted">(' + u.calls_today.toLocaleString() + ' of ' + p.maxCallsPerDay.toLocaleString() + ' &bull; resets at midnight UTC)</span></div>' +
+    '<div style="background:var(--surface-border);height:7px;border-radius:4px;overflow:hidden;margin-bottom:20px"><div style="background:var(--accent-emerald);width:' + callPct + '%;height:100%"></div></div>' +
+    (me.tenant.plan === 'free' ? '<button class="primary" data-plan="personal" data-interval="month">Upgrade to Personal $' + me.plans.personal.priceUsdMonthly + '/month</button><button class="ghost" data-plan="personal" data-interval="year">Personal $' + me.plans.personal.priceUsdYearly + '/year</button>' +
+      '<p style="margin-top:16px">Team, $' + me.plans.team.priceUsdMonthly + ' per seat per month: <input id="seats" type="number" min="1" max="' + me.max_seats + '" value="2" style="width:80px;display:inline-block"> seats <button class="ghost" data-plan="team" data-interval="month">Choose Team</button></p>' : '') +
     (me.tenant.plan === 'team' ? '<p>' + t.seats + ' seat' + (t.seats === 1 ? '' : 's') + ' <input id="newseats" type="number" min="1" max="' + me.max_seats + '" value="' + t.seats + '" style="width:80px;display:inline-block"> <button class="ghost" id="setseats">Change seats</button></p>' : '') +
     '<button class="ghost" id="portal">Manage billing</button>' +
-    '<p class="muted">Billing mode: ' + esc(me.billing_mode) + '</p></div>'));
+    '<p class="muted" style="margin-top:10px">Billing mode: ' + esc(me.billing_mode) + '</p></div>'));
   app.append($('<div class="card"><h2>Flags</h2>' + (flags.length ? '<table><tr><th>When</th><th>Severity</th><th>What</th><th>From</th></tr>' + flags.map((f) => '<tr><td>' + esc(new Date(f.created_at).toLocaleString()) + '</td><td class="sev-' + esc(f.severity) + '">' + esc(f.severity) + '</td><td>' + esc(f.reason) + (f.excerpt ? '<br><span class="mono">' + esc(f.excerpt.slice(0, 160)) + '</span>' : '') + '</td><td>' + esc(f.source_ai || '') + '</td></tr>').join('') + '</table>' : '<p class="muted">No flags yet. Secrets and personal numbers are redacted before anything is stored.</p>') +
     '<h2 style="margin-top:16px">Alerts</h2><label>Email</label><input id="ae" value="' + esc(t.alert_email || '') + '"><label>Webhook (https)</label><input id="aw" value="' + esc(t.alert_webhook_url || '') + '"><label>Alert at</label><select id="as">' + ['low','medium','high','critical'].map((s) => '<option' + (s === t.alert_min_severity ? ' selected' : '') + '>' + s + '</option>').join('') + '</select><button id="savealerts">Save alerts</button></div>'));
   app.append($('<div class="card"><h2>API keys (for Helmian Guard and other services)</h2>' + (keys.length ? '<table>' + keys.map((k) => '<tr><td>' + esc(k.name) + '</td><td class="mono">' + esc(k.prefix) + '…</td><td>' + (k.revoked_at ? 'revoked' : '<button class="ghost" data-revoke="' + esc(k.id) + '">Revoke</button>') + '</td></tr>').join('') + '</table>' : '<p class="muted">None yet.</p>') + '<input id="kn" placeholder="Key name, e.g. Guard extension"><button id="newkey">Create key</button><p id="keyout"></p></div>'));
