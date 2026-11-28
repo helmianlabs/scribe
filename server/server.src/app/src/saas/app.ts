@@ -27,7 +27,7 @@ import { MAILBOXES, canonicalMailbox } from "../courier/mailboxes.js";
 import { listFlags } from "../flags/store.js";
 import { recordFlags, findingsToFlags } from "../flags/service.js";
 import { scanText, SEVERITIES, type Severity } from "../flags/scanner.js";
-import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS, tryPage, tryReadyPage, installCommands, homePage, pricingPage, termsPage, privacyPage, refundsPage } from "./pages.js";
+import { signInPage, verifyPage, messagePage, consentPage, dashboardPage, mockBillingPage, gettingStartedPage, paddlePayPage, PADDLE_PAY_JS, PADDLE_PAY_CSP, DASHBOARD_JS, THEME_JS, tryPage, tryReadyPage, installCommands, homePage, pricingPage, termsPage, privacyPage, refundsPage } from "./pages.js";
 
 const COOKIE = "smm_session";
 
@@ -220,6 +220,7 @@ export function createSaasApp(deps: SaasDeps) {
     html(res, 200, paddlePayPage({ token: cfg.paddle.clientToken, environment: cfg.paddle.clientToken.startsWith("live_") ? "production" : "sandbox" }));
   });
   app.get("/static/paddle-pay.js", (_req, res) => res.set("Content-Type", "text/javascript; charset=utf-8").send(PADDLE_PAY_JS));
+  app.get("/static/theme.js", (_req, res) => res.set("Content-Type", "text/javascript; charset=utf-8").send(THEME_JS));
 
   // ---------------------------------------------------------------- OAuth (AS) + consent by signed-in account
   // Custom discovery documents (registered BEFORE the SDK router below so
