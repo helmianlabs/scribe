@@ -7,14 +7,13 @@
 [![GitHub Repo stars](https://img.shields.io/github/stars/helmianlabs/scribe)](https://github.com/helmianlabs/scribe/stargazers)
 [![License: BUSL 1.1](https://img.shields.io/badge/license-BUSL%201.1-blue.svg)](LICENSE)
 [![MCP server](https://img.shields.io/badge/MCP-server-black.svg)](https://modelcontextprotocol.io)
-[![Website](https://img.shields.io/badge/site-scribe.helmian.cloud-0f766e)](https://scribe.helmian.cloud)
+[![Website](https://img.shields.io/badge/site-scribemem.helmian.cloud-0f766e)](https://scribemem.helmian.cloud)
 
 </div>
 
 Scribe is a source-available memory MCP server (Model Context Protocol) that
 gives Claude, ChatGPT, Cursor, and any other MCP client one shared long-term
-memory. A librarian sorts memories into folders. The paid Personal tier
-($8/month) adds a knowledge graph and learning. On our test, recall is 18 of
+memory. A librarian sorts memories into folders. On our test, recall is 18 of
 18, and a full recall uses 61% to 99% fewer tokens than pasting all memories.
 
 Scribe also gives your AIs a mailbox, and a pair of hands on your own computer.
@@ -41,20 +40,27 @@ claude mcp add --transport http scribe-memory https://scribemem.helmian.cloud/t/
 - **Claude:** Settings → Connectors → Add custom connector, paste the memory address, then Approve.
 - **ChatGPT:** Settings → Connectors → Create, paste the memory address, then Approve.
 
+To keep a memory and sign in later, open
+[scribemem.helmian.cloud/login](https://scribemem.helmian.cloud/login) and enter
+your email. Scribe sends a one-time sign-in link. The same link creates an
+account if you are new.
+
 Paid checkout (Personal $8/month, Team $15/seat) is not open yet. The Free plan
 limits apply to try memories. Self-host and the Windows app are still in this
 repository; they are a separate setup from the hosted service.
 
-Your AIs connect to Scribe's memory and mailbox through Scribe's own door
-(`https://scribe.dairyforge.com/mcp`), and the owner approves each
-connection with the Scribe passphrase.
+## Self-host and the Scribe PC program
+
+This repository holds **all of Scribe** — the PC program, the memory server,
+the door and the Guard — under the Business Source License 1.1 (see LICENSE).
+
+For a self-hosted or owner-run setup, AIs connect to Scribe's memory and mailbox
+through Scribe's door (`https://scribe.dairyforge.com/mcp`), and the owner
+approves each connection with the Scribe passphrase.
 
 The PC program is **Scribe**: the Windows installer is
 named Scribe and pairs your PC through the Scribe hands hub,
 using your Scribe passphrase or a 10-minute pairing code.
-
-This repository holds **all of Scribe** — the PC program, the memory server,
-the door and the Guard — under the Business Source License 1.1 (see LICENSE).
 
 ## Screenshots
 
@@ -105,12 +111,15 @@ release is built from this repository's source in GitHub Actions.
 
 ## Plans
 
-- **Free** — $0: 1,000 memories, 50 MB, every MCP connector, Librarian filing
-  with the why-trail, 3 typed rules, search and recall, export
+- **Free** — $0: 1,000 memories, 50 MB, 500 calls a day, every MCP connector,
+  Librarian filing with the why-trail, 3 typed rules, search and recall, export
 - **Personal** — $8/month or $80/year: adds learning, unlimited rules, the
-  people, places and companies shelves, the knowledge graph, unlimited
-  memories, 5 GB, ChatGPT and Claude history import, daily backups
-- **Team** — $15 per seat
+  people, places and companies shelves, unlimited memories, 5 GB, 10,000
+  calls a day, and ChatGPT and Claude history import. A knowledge graph and
+  daily backups are planned for this tier; they are not on the hosted service
+  yet.
+- **Team** — $15 per seat. Paid checkout is not open yet, and there is no
+  team invite flow yet.
 - **Self-Hosted** — custom
 
 Try the hosted service for free at [scribemem.helmian.cloud/try](https://scribemem.helmian.cloud/try).
